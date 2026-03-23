@@ -1,0 +1,9 @@
+{
+  "name": "raytracing",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "glfw3",
+    "yaml-cpp"
+  ],
+  "builtin-baseline": "2e58bb35ff7a3a037920d959ce20cb4d8c22319a"
+}
