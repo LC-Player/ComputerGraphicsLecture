@@ -13,12 +13,13 @@ cmake-build-release/
 cmake-build-*/
 enc-temp-folder/
 vcpkg_installed/
-stress-test/
 .stress-test/
 .codeartsdoer/
+*/.codeartsdoer/
 cmake-build-debug-visual-studio/
 cmake-build-release-visual-studio/
 cmake-build-relwithdebinfo-visual-studio/
+
 #files
 *.user
 *.vcxproj.filters
@@ -41,14 +42,4 @@ CMakeSettings.json
 CMakePresets.json
 
 #custom
-#imgui
-Reya/vendor/imgui/.github
-Reya/vendor/imgui/backends
-Reya/vendor/imgui/examples
-Reya/vendor/imgui/misc
-Reya/vendor/imgui/.editorconfig
-Reya/vendor/imgui/.gitignore
-Reya/vendor/imgui/.gitattributes
-
-Reyalize/raw_assets/
-ReyaDemo/raw_assets/
+Lab1Triangle/Lab1-Vulkan中三角形绘制-2026.pdf

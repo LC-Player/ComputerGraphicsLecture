@@ -3,7 +3,16 @@
   "version-string": "0.1.0",
   "dependencies": [
     "glfw3",
-    "yaml-cpp"
+    "glm",
+    "tinyobjloader",
+    "stb",
+    "tinygltf",
+    "nlohmann-json",
+    {
+      "name": "ktx",
+      "features": [ "vulkan" ]
+    },
+    "openal-soft"
   ],
   "builtin-baseline": "2e58bb35ff7a3a037920d959ce20cb4d8c22319a"
 }
