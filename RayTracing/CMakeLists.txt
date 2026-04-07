@@ -87,11 +87,8 @@ target_compile_definitions(RayTracing PUBLIC
 if(WIN32)
     target_compile_definitions(RayTracing PUBLIC
             RT_PLATFORM_WINDOWS
-            GLFW_INCLUDE_NONE
+            GLFW_INCLUDE_VULKAN
     )
-    if (RayTracing_LIB_LINK_TYPE STREQUAL "SHARED")
-        target_compile_definitions(RayTracing PRIVATE RY_BUILD_DLL)
-    endif()
 endif()
 if (MSVC)
     target_compile_options(RayTracing PRIVATE /utf-8)

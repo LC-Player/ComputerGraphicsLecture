@@ -436,17 +436,7 @@ void Application::mainLoop() {
     while (!windowManager->shouldClose()) {
         windowManager->pollEvents();
 
-        try {
-            drawFrame();
-        } catch (const VulkanException& e) {
-            if (e.getErrorCode() == VK_ERROR_OUT_OF_DATE_KHR || e.getErrorCode() == VK_SUBOPTIMAL_KHR) {
-                // Swap chain needs recreation
-                recreateSwapChain();
-            } else {
-                LOG_ERROR("Failed to draw frame: " + std::string(e.what()));
-                throw;
-            }
-        }
+        drawFrame();
 
         static int frameCount = 0;
         frameCount++;

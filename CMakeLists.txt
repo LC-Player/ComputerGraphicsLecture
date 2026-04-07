@@ -17,10 +17,6 @@ else()
     add_definitions(-DVK_USE_PLATFORM_XLIB_KHR)
 endif()
 
-# Add subdirectories for different executables
-add_subdirectory(RayTracing)
-add_subdirectory(Lab1Triangle)
-
 list(APPEND CMAKE_PREFIX_PATH "$ENV{VULKAN_SDK}")
 
 if(DEFINED ENV{VULKAN_SDK})
@@ -28,7 +24,15 @@ if(DEFINED ENV{VULKAN_SDK})
     set(ENV{VULKAN_SDK} "${VULKAN_SDK}")
 endif()
 find_package(Vulkan REQUIRED)
+find_package(slang CONFIG HINTS "$ENV{VULKAN_SDK}/lib/cmake")
 
 if(DEFINED ENV{VULKAN_SDK})
     find_package(slang CONFIG HINTS "$ENV{VULKAN_SDK}/lib/cmake")
 endif()
+
+set(SLANGC_EXECUTABLE "${VULKAN_SDK}/Bin/slangc.exe")
+message("slangc executable at ${SLANGC_EXECUTABLE}")
+
+# Add subdirectories for different executables
+add_subdirectory(RayTracing)
+add_subdirectory(Lab1Triangle)
