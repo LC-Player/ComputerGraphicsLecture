@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include <string>
 #include "core/Exception.hpp"
@@ -23,7 +24,7 @@ struct InstanceConfig {
 };
 
 /**
- * @brief Vulkan instance manager
+ * @brief Vulkan instance manager using vk::raii
  *
  * Manages the creation and destruction of the Vulkan instance,
  * which is the foundation of all Vulkan applications.
@@ -40,7 +41,7 @@ public:
     /**
      * @brief Destroy the VulkanInstance object
      */
-    ~VulkanInstance();
+    ~VulkanInstance() = default;
 
     // Delete copy constructor and assignment operator
     VulkanInstance(const VulkanInstance&) = delete;
@@ -49,19 +50,20 @@ public:
     /**
      * @brief Move constructor
      */
-    VulkanInstance(VulkanInstance&& other) noexcept;
+    VulkanInstance(VulkanInstance&& other) noexcept = default;
 
     /**
      * @brief Move assignment operator
      */
-    VulkanInstance& operator=(VulkanInstance&& other) noexcept;
+    VulkanInstance& operator=(VulkanInstance&& other) noexcept = default;
 
     /**
      * @brief Get the Vulkan instance handle
      *
-     * @return VkInstance Vulkan instance
+     * @return vk::raii::Instance& Vulkan instance
      */
-    VkInstance get() const { return instance; }
+    vk::raii::Instance& get() { return instance; }
+    const vk::raii::Instance& get() const { return instance; }
 
     /**
      * @brief Check if validation layers are enabled
@@ -73,21 +75,22 @@ public:
     /**
      * @brief Get the debug messenger handle
      *
-     * @return VkDebugUtilsMessengerEXT Debug messenger
+     * @return vk::raii::DebugUtilsMessengerEXT& Debug messenger
      */
-    VkDebugUtilsMessengerEXT getDebugMessenger() const { return debugMessenger; }
+    vk::raii::DebugUtilsMessengerEXT& getDebugMessenger() { return debugMessenger; }
+    const vk::raii::DebugUtilsMessengerEXT& getDebugMessenger() const { return debugMessenger; }
 
     /**
      * @brief Get the list of enabled validation layers
      *
-     * @return std::vector<const char*> List of validation layer names
+     * @return const std::vector<const char*>& List of validation layer names
      */
     const std::vector<const char*>& getValidationLayers() const { return validationLayers; }
 
     /**
      * @brief Get the list of enabled instance extensions
      *
-     * @return std::vector<const char*> List of extension names
+     * @return const std::vector<const char*>& List of extension names
      */
     const std::vector<const char*>& getExtensions() const { return extensions; }
 
@@ -99,13 +102,13 @@ public:
     const InstanceConfig& getConfig() const { return config; }
 
 private:
-    VkInstance instance;
-    VkDebugUtilsMessengerEXT debugMessenger;
+    vk::raii::Context context;
+    vk::raii::Instance instance = nullptr;
+    vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
     InstanceConfig config;
     std::vector<const char*> validationLayers;
     std::vector<const char*> extensions;
     bool enableValidation;
-    bool initialized;
 
     /**
      * @brief Create the Vulkan instance

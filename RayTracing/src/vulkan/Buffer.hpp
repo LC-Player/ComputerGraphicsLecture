@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include <cstring>
 #include "core/Exception.hpp"
@@ -15,14 +16,14 @@ class VulkanDevice;
  * @brief Buffer creation parameters
  */
 struct BufferConfig {
-    VkDeviceSize size = 0;
-    VkBufferUsageFlags usage = 0;
-    VkMemoryPropertyFlags properties = 0;
-    VkSharingMode sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    vk::DeviceSize size = 0;
+    vk::BufferUsageFlags usage = {};
+    vk::MemoryPropertyFlags properties = {};
+    vk::SharingMode sharingMode = vk::SharingMode::eExclusive;
 };
 
 /**
- * @brief Vulkan buffer wrapper
+ * @brief Vulkan buffer wrapper using vk::raii
  *
  * Manages the lifecycle of Vulkan buffers and their associated memory.
  */
@@ -39,7 +40,7 @@ public:
     /**
      * @brief Destroy the Buffer object
      */
-    ~Buffer();
+    ~Buffer() = default;
 
     // Delete copy constructor and assignment operator
     Buffer(const Buffer&) = delete;
@@ -48,40 +49,41 @@ public:
     /**
      * @brief Move constructor
      */
-    Buffer(Buffer&& other) noexcept;
+    Buffer(Buffer&& other) noexcept = default;
 
     /**
      * @brief Move assignment operator
      */
-    Buffer& operator=(Buffer&& other) noexcept;
+    Buffer& operator=(Buffer&& other) noexcept = default;
 
     /**
      * @brief Get the buffer handle
      *
-     * @return VkBuffer Buffer handle
+     * @return vk::raii::Buffer& Buffer handle
      */
-    VkBuffer get() const { return buffer; }
+    vk::raii::Buffer& get() { return buffer; }
+    const vk::raii::Buffer& get() const { return buffer; }
 
     /**
      * @brief Get the buffer size
      *
-     * @return VkDeviceSize Buffer size in bytes
+     * @return vk::DeviceSize Buffer size in bytes
      */
-    VkDeviceSize getSize() const { return size; }
+    vk::DeviceSize getSize() const { return size; }
 
     /**
      * @brief Get the buffer usage flags
      *
-     * @return VkBufferUsageFlags Buffer usage flags
+     * @return vk::BufferUsageFlags Buffer usage flags
      */
-    VkBufferUsageFlags getUsage() const { return usage; }
+    vk::BufferUsageFlags getUsage() const { return usage; }
 
     /**
      * @brief Get the memory properties
      *
-     * @return VkMemoryPropertyFlags Memory properties
+     * @return vk::MemoryPropertyFlags Memory properties
      */
-    VkMemoryPropertyFlags getProperties() const { return properties; }
+    vk::MemoryPropertyFlags getProperties() const { return properties; }
 
     /**
      * @brief Map buffer memory for CPU access
@@ -91,7 +93,7 @@ public:
      * @return void* Mapped memory pointer
      * @throws VulkanException if mapping fails
      */
-    void* map(VkDeviceSize offset = 0, VkDeviceSize size = VK_WHOLE_SIZE);
+    void* map(vk::DeviceSize offset = 0, vk::DeviceSize size = VK_WHOLE_SIZE);
 
     /**
      * @brief Unmap buffer memory
@@ -106,7 +108,7 @@ public:
      * @param offset Buffer offset
      * @throws VulkanException if copy fails
      */
-    void copyFrom(const void* data, VkDeviceSize size, VkDeviceSize offset = 0);
+    void copyFrom(const void* data, vk::DeviceSize size, vk::DeviceSize offset = 0);
 
     /**
      * @brief Copy data from buffer
@@ -116,7 +118,7 @@ public:
      * @param offset Buffer offset
      * @throws VulkanException if copy fails
      */
-    void copyTo(void* data, VkDeviceSize size, VkDeviceSize offset = 0) const;
+    void copyTo(void* data, vk::DeviceSize size, vk::DeviceSize offset = 0) const;
 
     /**
      * @brief Create a vertex buffer
@@ -126,7 +128,7 @@ public:
      * @param size Data size
      * @return Buffer Vertex buffer
      */
-    static Buffer createVertexBuffer(VulkanDevice* device, const void* data, VkDeviceSize size);
+    static Buffer createVertexBuffer(VulkanDevice* device, const void* data, vk::DeviceSize size);
 
     /**
      * @brief Create an index buffer
@@ -136,7 +138,7 @@ public:
      * @param size Data size
      * @return Buffer Index buffer
      */
-    static Buffer createIndexBuffer(VulkanDevice* device, const void* data, VkDeviceSize size);
+    static Buffer createIndexBuffer(VulkanDevice* device, const void* data, vk::DeviceSize size);
 
     /**
      * @brief Create a uniform buffer
@@ -145,7 +147,7 @@ public:
      * @param size Buffer size
      * @return Buffer Uniform buffer
      */
-    static Buffer createUniformBuffer(VulkanDevice* device, VkDeviceSize size);
+    static Buffer createUniformBuffer(VulkanDevice* device, vk::DeviceSize size);
 
     /**
      * @brief Create a staging buffer
@@ -154,7 +156,7 @@ public:
      * @param size Buffer size
      * @return Buffer Staging buffer
      */
-    static Buffer createStagingBuffer(VulkanDevice* device, VkDeviceSize size);
+    static Buffer createStagingBuffer(VulkanDevice* device, vk::DeviceSize size);
 
     /**
      * @brief Copy data from one buffer to another
@@ -166,19 +168,19 @@ public:
      * @param srcOffset Source offset
      * @param dstOffset Destination offset
      */
-    static void copyBuffer(VkCommandBuffer commandBuffer,
-                          VkBuffer srcBuffer, VkBuffer dstBuffer,
-                          VkDeviceSize size,
-                          VkDeviceSize srcOffset = 0,
-                          VkDeviceSize dstOffset = 0);
+    static void copyBuffer(vk::raii::CommandBuffer& commandBuffer,
+                          vk::Buffer srcBuffer, vk::Buffer dstBuffer,
+                          vk::DeviceSize size,
+                          vk::DeviceSize srcOffset = 0,
+                          vk::DeviceSize dstOffset = 0);
 
 private:
-    VulkanDevice* device;
-    VkBuffer buffer;
-    VkDeviceMemory memory;
-    VkDeviceSize size;
-    VkBufferUsageFlags usage;
-    VkMemoryPropertyFlags properties;
+    VulkanDevice* device = nullptr;
+    vk::raii::Buffer buffer = nullptr;
+    vk::raii::DeviceMemory memory = nullptr;
+    vk::DeviceSize size;
+    vk::BufferUsageFlags usage;
+    vk::MemoryPropertyFlags properties;
     void* mappedMemory;
     bool isMapped;
 
@@ -204,7 +206,7 @@ private:
      * @return uint32_t Memory type index
      * @throws VulkanException if no suitable memory type is found
      */
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
+    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
 };
 
 } // namespace RYRayTracing

@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include "core/Exception.hpp"
 #include "core/Logger.hpp"
@@ -11,12 +12,12 @@ namespace RYRayTracing {
  * @brief Command pool configuration
  */
 struct CommandPoolConfig {
-    VkCommandPoolCreateFlags flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    vk::CommandPoolCreateFlags flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
     uint32_t queueFamilyIndex = 0;
 };
 
 /**
- * @brief Command manager
+ * @brief Command manager using vk::raii
  *
  * Manages Vulkan command pools and command buffers.
  */
@@ -28,12 +29,12 @@ public:
      * @param device Vulkan logical device
      * @param config Command pool configuration
      */
-    CommandManager(VkDevice device, const CommandPoolConfig& config = CommandPoolConfig());
+    CommandManager(vk::raii::Device& device, const CommandPoolConfig& config = CommandPoolConfig());
 
     /**
      * @brief Destroy the CommandManager object
      */
-    ~CommandManager();
+    ~CommandManager() = default;
 
     // Delete copy constructor and assignment operator
     CommandManager(const CommandManager&) = delete;
@@ -42,51 +43,38 @@ public:
     /**
      * @brief Move constructor
      */
-    CommandManager(CommandManager&& other) noexcept;
+    CommandManager(CommandManager&& other) noexcept = default;
 
     /**
      * @brief Move assignment operator
      */
-    CommandManager& operator=(CommandManager&& other) noexcept;
+    CommandManager& operator=(CommandManager&& other) noexcept = default;
 
     /**
      * @brief Get the command pool handle
      *
-     * @return VkCommandPool Command pool
+     * @return vk::raii::CommandPool& Command pool
      */
-    VkCommandPool getPool() const { return commandPool; }
+    vk::raii::CommandPool& getPool() { return commandPool; }
+    const vk::raii::CommandPool& getPool() const { return commandPool; }
 
     /**
      * @brief Allocate a single command buffer
      *
      * @param level Command buffer level
-     * @return VkCommandBuffer Command buffer
+     * @return vk::raii::CommandBuffer Command buffer
      */
-    VkCommandBuffer allocateCommandBuffer(VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+    vk::raii::CommandBuffer allocateCommandBuffer(vk::CommandBufferLevel level = vk::CommandBufferLevel::ePrimary);
 
     /**
      * @brief Allocate multiple command buffers
      *
      * @param count Number of command buffers to allocate
      * @param level Command buffer level
-     * @return std::vector<VkCommandBuffer> Command buffers
+     * @return std::vector<vk::raii::CommandBuffer> Command buffers
      */
-    std::vector<VkCommandBuffer> allocateCommandBuffers(
-        size_t count, VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-
-    /**
-     * @brief Free a command buffer
-     *
-     * @param commandBuffer Command buffer to free
-     */
-    void freeCommandBuffer(VkCommandBuffer commandBuffer);
-
-    /**
-     * @brief Free multiple command buffers
-     *
-     * @param commandBuffers Command buffers to free
-     */
-    void freeCommandBuffers(const std::vector<VkCommandBuffer>& commandBuffers);
+    std::vector<vk::raii::CommandBuffer> allocateCommandBuffers(
+        size_t count, vk::CommandBufferLevel level = vk::CommandBufferLevel::ePrimary);
 
     /**
      * @brief Begin a command buffer
@@ -94,22 +82,22 @@ public:
      * @param commandBuffer Command buffer
      * @param flags Usage flags
      */
-    void beginCommandBuffer(VkCommandBuffer commandBuffer,
-                            VkCommandBufferUsageFlags flags = 0);
+    void beginCommandBuffer(vk::raii::CommandBuffer& commandBuffer,
+                            vk::CommandBufferUsageFlags flags = {});
 
     /**
      * @brief End a command buffer
      *
      * @param commandBuffer Command buffer
      */
-    void endCommandBuffer(VkCommandBuffer commandBuffer);
+    void endCommandBuffer(vk::raii::CommandBuffer& commandBuffer);
 
     /**
      * @brief Begin a single time command buffer
      *
-     * @return VkCommandBuffer Command buffer
+     * @return vk::raii::CommandBuffer Command buffer
      */
-    VkCommandBuffer beginSingleTimeCommands();
+    vk::raii::CommandBuffer beginSingleTimeCommands();
 
     /**
      * @brief End and submit a single time command buffer
@@ -117,7 +105,7 @@ public:
      * @param commandBuffer Command buffer
      * @param queue Queue to submit to
      */
-    void endSingleTimeCommands(VkCommandBuffer commandBuffer, VkQueue queue);
+    void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer, vk::Queue queue);
 
     /**
      * @brief Reset command buffer
@@ -125,21 +113,20 @@ public:
      * @param commandBuffer Command buffer
      * @param flags Reset flags
      */
-    void resetCommandBuffer(VkCommandBuffer commandBuffer,
-                            VkCommandBufferResetFlags flags = 0);
+    void resetCommandBuffer(vk::raii::CommandBuffer& commandBuffer,
+                            vk::CommandBufferResetFlags flags = {});
 
     /**
      * @brief Reset command pool
      *
      * @param flags Reset flags
      */
-    void resetCommandPool(VkCommandPoolResetFlags flags = 0);
+    void resetCommandPool(vk::CommandPoolResetFlags flags = {});
 
 private:
-    VkDevice device;
-    VkCommandPool commandPool;
+    vk::raii::Device* device = nullptr;
+    vk::raii::CommandPool commandPool = nullptr;
     CommandPoolConfig config;
-    bool initialized;
 
     /**
      * @brief Create the command pool

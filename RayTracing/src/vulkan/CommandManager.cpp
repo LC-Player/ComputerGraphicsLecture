@@ -2,169 +2,153 @@
 
 namespace RYRayTracing {
 
-CommandManager::CommandManager(VkDevice device, const CommandPoolConfig& config)
-    : device(device), commandPool(VK_NULL_HANDLE), config(config), initialized(false) {
+CommandManager::CommandManager(vk::raii::Device& device, const CommandPoolConfig& config)
+    : device(&device), config(config) {
     createCommandPool();
-    initialized = true;
-    Logger::info("CommandManager initialized successfully");
-}
-
-CommandManager::~CommandManager() {
-    if (initialized && commandPool != VK_NULL_HANDLE) {
-        vkDestroyCommandPool(device, commandPool, nullptr);
-        Logger::info("CommandManager destroyed");
-    }
-}
-
-CommandManager::CommandManager(CommandManager&& other) noexcept
-    : device(other.device), commandPool(other.commandPool),
-      config(other.config), initialized(other.initialized) {
-    other.commandPool = VK_NULL_HANDLE;
-    other.initialized = false;
-}
-
-CommandManager& CommandManager::operator=(CommandManager&& other) noexcept {
-    if (this != &other) {
-        if (initialized && commandPool != VK_NULL_HANDLE) {
-            vkDestroyCommandPool(device, commandPool, nullptr);
-        }
-
-        device = other.device;
-        commandPool = other.commandPool;
-        config = other.config;
-        initialized = other.initialized;
-
-        other.commandPool = VK_NULL_HANDLE;
-        other.initialized = false;
-    }
-    return *this;
+    LOG_INFO("CommandManager initialized successfully");
 }
 
 void CommandManager::createCommandPool() {
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = config.flags;
-    poolInfo.queueFamilyIndex = config.queueFamilyIndex;
+    vk::CommandPoolCreateInfo poolInfo{
+        config.flags,
+        config.queueFamilyIndex
+    };
 
-    VkResult result = vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool);
-    if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to create command pool", __FUNCTION__, __FILE__, __LINE__);
+    try {
+        commandPool = device->createCommandPool(poolInfo);
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(), std::string("Failed to create command pool: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
     }
 
-    Logger::debug("Command pool created successfully");
+    LOG_DEBUG("Command pool created successfully");
 }
 
-VkCommandBuffer CommandManager::allocateCommandBuffer(VkCommandBufferLevel level) {
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = level;
-    allocInfo.commandBufferCount = 1;
+vk::raii::CommandBuffer CommandManager::allocateCommandBuffer(vk::CommandBufferLevel level) {
+    vk::CommandBufferAllocateInfo allocInfo{
+        *commandPool,
+        level,
+        1
+    };
 
-    VkCommandBuffer commandBuffer;
-    VkResult result = vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
-    if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to allocate command buffer", __FUNCTION__, __FILE__, __LINE__);
-    }
-
-    return commandBuffer;
-}
-
-std::vector<VkCommandBuffer> CommandManager::allocateCommandBuffers(
-    size_t count, VkCommandBufferLevel level) {
-
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = level;
-    allocInfo.commandBufferCount = static_cast<uint32_t>(count);
-
-    std::vector<VkCommandBuffer> commandBuffers(count);
-    VkResult result = vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data());
-    if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to allocate command buffers", __FUNCTION__, __FILE__, __LINE__);
-    }
-
-    return commandBuffers;
-}
-
-void CommandManager::freeCommandBuffer(VkCommandBuffer commandBuffer) {
-    vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
-}
-
-void CommandManager::freeCommandBuffers(const std::vector<VkCommandBuffer>& commandBuffers) {
-    vkFreeCommandBuffers(device, commandPool,
-                         static_cast<uint32_t>(commandBuffers.size()),
-                         commandBuffers.data());
-}
-
-void CommandManager::beginCommandBuffer(VkCommandBuffer commandBuffer, VkCommandBufferUsageFlags flags) {
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = flags;
-
-    VkResult result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
-    if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to begin command buffer", __FUNCTION__, __FILE__, __LINE__);
+    try {
+        auto buffers = device->allocateCommandBuffers(allocInfo);
+        return std::move(buffers[0]);
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to allocate command buffer: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
     }
 }
 
-void CommandManager::endCommandBuffer(VkCommandBuffer commandBuffer) {
-    VkResult result = vkEndCommandBuffer(commandBuffer);
-    if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to end command buffer", __FUNCTION__, __FILE__, __LINE__);
+std::vector<vk::raii::CommandBuffer> CommandManager::allocateCommandBuffers(
+    size_t count, vk::CommandBufferLevel level) {
+
+    vk::CommandBufferAllocateInfo allocInfo{
+        *commandPool,
+        level,
+        static_cast<uint32_t>(count)
+    };
+
+    try {
+        auto buffers = device->allocateCommandBuffers(allocInfo);
+        // Convert to vector of raii::CommandBuffer
+        std::vector<vk::raii::CommandBuffer> result;
+        for (auto& buf : buffers) {
+            result.emplace_back(std::move(buf));
+        }
+        return result;
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to allocate command buffers: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
     }
 }
 
-VkCommandBuffer CommandManager::beginSingleTimeCommands() {
-    VkCommandBuffer commandBuffer = allocateCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+void CommandManager::beginCommandBuffer(vk::raii::CommandBuffer& commandBuffer,
+                                        vk::CommandBufferUsageFlags flags) {
+    vk::CommandBufferBeginInfo beginInfo{
+        flags
+    };
 
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-    VkResult result = vkBeginCommandBuffer(commandBuffer, &beginInfo);
-    if (result != VK_SUCCESS) {
-        freeCommandBuffer(commandBuffer);
-        throw VulkanException(result, "Failed to begin single time command buffer", __FUNCTION__, __FILE__, __LINE__);
-    }
-
-    return commandBuffer;
-}
-
-void CommandManager::endSingleTimeCommands(VkCommandBuffer commandBuffer, VkQueue queue) {
-    VkResult result = vkEndCommandBuffer(commandBuffer);
-    if (result != VK_SUCCESS) {
-        freeCommandBuffer(commandBuffer);
-        throw VulkanException(result, "Failed to end single time command buffer", __FUNCTION__, __FILE__, __LINE__);
-    }
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    result = vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
-    if (result != VK_SUCCESS) {
-        freeCommandBuffer(commandBuffer);
-        throw VulkanException(result, "Failed to submit command buffer", __FUNCTION__, __FILE__, __LINE__);
-    }
-
-    vkQueueWaitIdle(queue);
-    freeCommandBuffer(commandBuffer);
-}
-
-void CommandManager::resetCommandBuffer(VkCommandBuffer commandBuffer, VkCommandBufferResetFlags flags) {
-    VkResult result = vkResetCommandBuffer(commandBuffer, flags);
-    if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to reset command buffer", __FUNCTION__, __FILE__, __LINE__);
+    try {
+        commandBuffer.begin(beginInfo);
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to begin command buffer: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
     }
 }
 
-void CommandManager::resetCommandPool(VkCommandPoolResetFlags flags) {
-    VkResult result = vkResetCommandPool(device, commandPool, flags);
-    if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to reset command pool", __FUNCTION__, __FILE__, __LINE__);
+void CommandManager::endCommandBuffer(vk::raii::CommandBuffer& commandBuffer) {
+    try {
+        commandBuffer.end();
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to end command buffer: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
+    }
+}
+
+vk::raii::CommandBuffer CommandManager::beginSingleTimeCommands() {
+    auto commandBuffer = allocateCommandBuffer(vk::CommandBufferLevel::ePrimary);
+
+    vk::CommandBufferBeginInfo beginInfo{
+        vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+    };
+
+    try {
+        commandBuffer.begin(beginInfo);
+        return commandBuffer;
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to begin single time command buffer: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
+    }
+}
+
+void CommandManager::endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer, vk::Queue queue) {
+    try {
+        commandBuffer.end();
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to end single time command buffer: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
+    }
+
+    vk::SubmitInfo submitInfo{
+        {},
+        {},
+        *commandBuffer
+    };
+
+    try {
+        queue.submit(submitInfo, nullptr);
+        queue.waitIdle();
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to submit command buffer: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
+    }
+}
+
+void CommandManager::resetCommandBuffer(vk::raii::CommandBuffer& commandBuffer,
+                                        vk::CommandBufferResetFlags flags) {
+    try {
+        commandBuffer.reset(flags);
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to reset command buffer: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
+    }
+}
+
+void CommandManager::resetCommandPool(vk::CommandPoolResetFlags flags) {
+    try {
+        commandPool.reset(flags);
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(), std::string("Failed to reset command pool: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
     }
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include <string>
 #include "core/Exception.hpp"
@@ -32,7 +33,7 @@ struct ShaderModuleConfig {
 };
 
 /**
- * @brief Vulkan shader module wrapper
+ * @brief Vulkan shader module wrapper using vk::raii
  *
  * Manages the lifecycle of Vulkan shader modules.
  */
@@ -60,7 +61,7 @@ public:
     /**
      * @brief Destroy the ShaderModule object
      */
-    ~ShaderModule();
+    ~ShaderModule() = default;
 
     // Delete copy constructor and assignment operator
     ShaderModule(const ShaderModule&) = delete;
@@ -69,19 +70,20 @@ public:
     /**
      * @brief Move constructor
      */
-    ShaderModule(ShaderModule&& other) noexcept;
+    ShaderModule(ShaderModule&& other) noexcept = default;
 
     /**
      * @brief Move assignment operator
      */
-    ShaderModule& operator=(ShaderModule&& other) noexcept;
+    ShaderModule& operator=(ShaderModule&& other) noexcept = default;
 
     /**
      * @brief Get the shader module handle
      *
-     * @return VkShaderModule Shader module handle
+     * @return vk::raii::ShaderModule& Shader module handle
      */
-    VkShaderModule get() const { return shaderModule; }
+    vk::raii::ShaderModule& get() { return shaderModule; }
+    const vk::raii::ShaderModule& get() const { return shaderModule; }
 
     /**
      * @brief Get the shader stage
@@ -100,16 +102,16 @@ public:
     /**
      * @brief Get the Vulkan shader stage flag
      *
-     * @return VkShaderStageFlagBits Vulkan shader stage flag
+     * @return vk::ShaderStageFlagBits Vulkan shader stage flag
      */
-    VkShaderStageFlagBits getVulkanStage() const;
+    vk::ShaderStageFlagBits getVulkanStage() const;
 
     /**
      * @brief Get the pipeline shader stage create info
      *
-     * @return VkPipelineShaderStageCreateInfo Pipeline shader stage create info
+     * @return vk::PipelineShaderStageCreateInfo Pipeline shader stage create info
      */
-    VkPipelineShaderStageCreateInfo getStageCreateInfo() const;
+    vk::PipelineShaderStageCreateInfo getStageCreateInfo() const;
 
     /**
      * @brief Load SPIR-V code from file
@@ -170,7 +172,7 @@ public:
 
 private:
     VulkanDevice* device;
-    VkShaderModule shaderModule;
+    vk::raii::ShaderModule shaderModule = nullptr;
     ShaderStage stage;
     std::string entryPoint;
     std::vector<char> code;
@@ -186,9 +188,9 @@ private:
      * @brief Convert ShaderStage to Vulkan stage flag
      *
      * @param stage Shader stage
-     * @return VkShaderStageFlagBits Vulkan stage flag
+     * @return vk::ShaderStageFlagBits Vulkan stage flag
      */
-    static VkShaderStageFlagBits stageToVulkan(ShaderStage stage);
+    static vk::ShaderStageFlagBits stageToVulkan(ShaderStage stage);
 
     /**
      * @brief Convert Vulkan stage flag to string
@@ -196,7 +198,7 @@ private:
      * @param stage Vulkan stage flag
      * @return std::string Stage name
      */
-    static std::string stageToString(VkShaderStageFlagBits stage);
+    static std::string stageToString(vk::ShaderStageFlagBits stage);
 
     /**
      * @brief Convert ShaderStage to string

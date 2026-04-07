@@ -1,7 +1,6 @@
 #include "WindowManager.hpp"
 #include "core/Exception.hpp"
 #include <stdexcept>
-#include <GLFW/glfw3.h>
 
 namespace RYRayTracing {
 
@@ -24,9 +23,6 @@ WindowManager::~WindowManager() {
         glfwDestroyWindow(window);
         window = nullptr;
     }
-
-    // Note: We don't call glfwTerminate() here because there might be
-    // other windows. GLFW termination should be handled at application level.
 }
 
 WindowManager::WindowManager(WindowManager&& other) noexcept
@@ -71,7 +67,7 @@ void WindowManager::init() {
 
     // Initialize GLFW
     if (!glfwInit()) {
-        throw VulkanException(VK_ERROR_INITIALIZATION_FAILED,
+        throw VulkanException(vk::Result::eErrorInitializationFailed,
                             "Failed to initialize GLFW",
                             __FUNCTION__, __FILE__, __LINE__);
     }
@@ -119,24 +115,24 @@ std::pair<int, int> WindowManager::getFramebufferSize() const {
     return {fbWidth, fbHeight};
 }
 
-VkSurfaceKHR WindowManager::createSurface(VkInstance instance) const {
+vk::raii::SurfaceKHR WindowManager::createSurface(vk::raii::Instance& instance) const {
     if (!window) {
-        throw VulkanException(VK_ERROR_INITIALIZATION_FAILED,
+        throw VulkanException(vk::Result::eErrorInitializationFailed,
                             "Cannot create surface: window not created",
                             __FUNCTION__, __FILE__, __LINE__);
     }
 
     VkSurfaceKHR surface;
-    VkResult result = glfwCreateWindowSurface(instance, window, nullptr, &surface);
+    VkResult result = glfwCreateWindowSurface(*instance, window, nullptr, &surface);
 
     if (result != VK_SUCCESS) {
-        throw VulkanException(result,
+        throw VulkanException(static_cast<vk::Result>(result),
                             "Failed to create window surface",
                             __FUNCTION__, __FILE__, __LINE__);
     }
 
     LOG_INFO("Vulkan surface created successfully");
-    return surface;
+    return vk::raii::SurfaceKHR(instance, surface);
 }
 
 void WindowManager::setCallbacks(const WindowCallbacks& callbacks) {
@@ -170,7 +166,6 @@ bool WindowManager::isVisible() const {
 }
 
 void WindowManager::setupWindowHints() const {
-    // Basic window hints
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
@@ -178,7 +173,6 @@ void WindowManager::setupWindowHints() const {
     glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_TRUE);
     glfwWindowHint(GLFW_CENTER_CURSOR, GLFW_TRUE);
 
-    // OpenGL context hints (not used for Vulkan but set anyway)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 0);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_ANY_PROFILE);
@@ -192,14 +186,12 @@ void WindowManager::createWindow() {
     window = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
 
     if (!window) {
-        throw VulkanException(VK_ERROR_INITIALIZATION_FAILED,
+        throw VulkanException(vk::Result::eErrorInitializationFailed,
                             "Failed to create GLFW window",
                             __FUNCTION__, __FILE__, __LINE__);
     }
 
-    // Store this instance in GLFW window user pointer
     glfwSetWindowUserPointer(window, this);
-
     LOG_DEBUG("GLFW window created successfully");
 }
 
@@ -208,13 +200,8 @@ void WindowManager::setupCallbacks() {
         return;
     }
 
-    // Framebuffer resize callback
     glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
-
-    // Window close callback
     glfwSetWindowCloseCallback(window, windowCloseCallback);
-
-    // Input callbacks
     glfwSetKeyCallback(window, keyCallback);
     glfwSetCursorPosCallback(window, cursorPosCallback);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
@@ -222,7 +209,6 @@ void WindowManager::setupCallbacks() {
     LOG_DEBUG("GLFW callbacks configured");
 }
 
-// Static callback functions
 void WindowManager::framebufferResizeCallback(GLFWwindow* window, int width, int height) {
     auto instance = getInstance(window);
     if (instance) {
@@ -258,16 +244,12 @@ void WindowManager::mouseButtonCallback(GLFWwindow* window, int button, int acti
     }
 }
 
-// Instance callback handlers
 void WindowManager::handleFramebufferResize(int width, int height) {
     LOG_DEBUG("Framebuffer resized: " + std::to_string(width) + "x" + std::to_string(height));
     framebufferResized = true;
-
-    // Update internal size
     this->width = width;
     this->height = height;
 
-    // Call user callback if set
     if (callbacks.onResize) {
         callbacks.onResize(width, height);
     }
@@ -275,29 +257,24 @@ void WindowManager::handleFramebufferResize(int width, int height) {
 
 void WindowManager::handleWindowClose() {
     LOG_DEBUG("Window close requested");
-
-    // Call user callback if set
     if (callbacks.onClose) {
         callbacks.onClose();
     }
 }
 
 void WindowManager::handleKey(int key, int action) {
-    // Call user callback if set
     if (callbacks.onKey) {
         callbacks.onKey(key, action);
     }
 }
 
 void WindowManager::handleMouseMove(double x, double y) {
-    // Call user callback if set
     if (callbacks.onMouseMove) {
         callbacks.onMouseMove(x, y);
     }
 }
 
 void WindowManager::handleMouseButton(int button, int action) {
-    // Call user callback if set
     if (callbacks.onMouseButton) {
         callbacks.onMouseButton(button, action);
     }

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <GLFW/glfw3.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <string>
 #include <functional>
 #include "core/Logger.hpp"
@@ -114,10 +116,11 @@ public:
      * @brief Create a Vulkan surface for the window
      *
      * @param instance Vulkan instance
-     * @return VkSurfaceKHR Created surface
+     * @param allocator Allocation callbacks (optional)
+     * @return vk::raii::SurfaceKHR Created surface
      * @throws VulkanException if surface creation fails
      */
-    VkSurfaceKHR createSurface(VkInstance instance) const;
+    vk::raii::SurfaceKHR createSurface(vk::raii::Instance& instance) const;
 
     /**
      * @brief Check if window was resized

@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include <string>
 #include <optional>
@@ -34,7 +35,7 @@ struct SwapChainSupportDetails;
  */
 struct DeviceConfig {
     std::vector<const char*> requiredExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-    VkPhysicalDeviceFeatures requiredFeatures = {};
+    vk::PhysicalDeviceFeatures requiredFeatures = {};
     bool requireGraphicsQueue = true;
     bool requirePresentQueue = true;
     bool requireTransferQueue = false;
@@ -42,7 +43,7 @@ struct DeviceConfig {
 };
 
 /**
- * @brief Vulkan device manager
+ * @brief Vulkan device manager using vk::raii
  *
  * Manages physical device selection and logical device creation.
  */
@@ -55,12 +56,13 @@ public:
      * @param surface Window surface
      * @param config Device configuration
      */
-    VulkanDevice(VkInstance instance, VkSurfaceKHR surface, const DeviceConfig& config = DeviceConfig());
+    VulkanDevice(vk::raii::Instance& instance, vk::raii::SurfaceKHR& surface,
+                const DeviceConfig& config = DeviceConfig());
 
     /**
      * @brief Destroy the VulkanDevice object
      */
-    ~VulkanDevice();
+    ~VulkanDevice() = default;
 
     // Delete copy constructor and assignment operator
     VulkanDevice(const VulkanDevice&) = delete;
@@ -69,40 +71,42 @@ public:
     /**
      * @brief Move constructor
      */
-    VulkanDevice(VulkanDevice&& other) noexcept;
+    VulkanDevice(VulkanDevice&& other) noexcept = default;
 
     /**
      * @brief Move assignment operator
      */
-    VulkanDevice& operator=(VulkanDevice&& other) noexcept;
+    VulkanDevice& operator=(VulkanDevice&& other) noexcept = default;
 
     /**
      * @brief Get the logical device handle
      *
-     * @return VkDevice Logical device
+     * @return vk::raii::Device& Logical device
      */
-    VkDevice get() const { return device; }
+    vk::raii::Device& get() { return device; }
+    const vk::raii::Device& get() const { return device; }
 
     /**
      * @brief Get the physical device handle
      *
-     * @return VkPhysicalDevice Physical device
+     * @return vk::raii::PhysicalDevice& Physical device
      */
-    VkPhysicalDevice getPhysical() const { return physicalDevice; }
+    vk::raii::PhysicalDevice& getPhysical() { return physicalDevice; }
+    const vk::raii::PhysicalDevice& getPhysical() const { return physicalDevice; }
 
     /**
      * @brief Get the graphics queue
      *
-     * @return VkQueue Graphics queue
+     * @return vk::Queue Graphics queue
      */
-    VkQueue getGraphicsQueue() const { return graphicsQueue; }
+    vk::Queue getGraphicsQueue() const { return graphicsQueue; }
 
     /**
      * @brief Get the present queue
      *
-     * @return VkQueue Present queue
+     * @return vk::Queue Present queue
      */
-    VkQueue getPresentQueue() const { return presentQueue; }
+    vk::Queue getPresentQueue() const { return presentQueue; }
 
     /**
      * @brief Get the graphics queue family index
@@ -128,16 +132,16 @@ public:
     /**
      * @brief Get the device properties
      *
-     * @return const VkPhysicalDeviceProperties& Device properties
+     * @return const vk::PhysicalDeviceProperties& Device properties
      */
-    const VkPhysicalDeviceProperties& getProperties() const { return deviceProperties; }
+    const vk::PhysicalDeviceProperties& getProperties() const { return deviceProperties; }
 
     /**
      * @brief Get the device features
      *
-     * @return const VkPhysicalDeviceFeatures& Device features
+     * @return const vk::PhysicalDeviceFeatures& Device features
      */
-    const VkPhysicalDeviceFeatures& getFeatures() const { return deviceFeatures; }
+    const vk::PhysicalDeviceFeatures& getFeatures() const { return deviceFeatures; }
 
     /**
      * @brief Get the swap chain support details for a physical device
@@ -145,7 +149,7 @@ public:
      * @param device Physical device to query
      * @return SwapChainSupportDetails Swap chain support details
      */
-    SwapChainSupportDetails getSwapChainSupportDetails(VkPhysicalDevice device) const;
+    SwapChainSupportDetails getSwapChainSupportDetails(vk::PhysicalDevice device) const;
 
     /**
      * @brief Find a suitable memory type
@@ -155,7 +159,7 @@ public:
      * @return uint32_t Memory type index
      * @throws VulkanException if no suitable memory type is found
      */
-    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
+    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
 
     /**
      * @brief Wait for the device to become idle
@@ -170,18 +174,15 @@ public:
     const DeviceConfig& getConfig() const { return config; }
 
 private:
-    VkInstance instance;
-    VkSurfaceKHR surface;
-    VkPhysicalDevice physicalDevice;
-    VkDevice device;
-    VkQueue graphicsQueue;
-    VkQueue presentQueue;
+    vk::raii::PhysicalDevice physicalDevice = nullptr;
+    vk::raii::Device device = nullptr;
+    vk::Queue graphicsQueue;
+    vk::Queue presentQueue;
     QueueFamilyIndices queueFamilyIndices;
-    VkPhysicalDeviceProperties deviceProperties;
-    VkPhysicalDeviceFeatures deviceFeatures;
+    vk::PhysicalDeviceProperties deviceProperties;
+    vk::PhysicalDeviceFeatures deviceFeatures;
     DeviceConfig config;
     std::vector<const char*> enabledExtensions;
-    bool initialized;
 
     uint32_t graphicsQueueFamily;
     uint32_t presentQueueFamily;
@@ -189,32 +190,37 @@ private:
     /**
      * @brief Pick a suitable physical device
      *
+     * @param instance Vulkan instance
+     * @param surface Window surface
      * @throws VulkanException if no suitable device is found
      */
-    void pickPhysicalDevice();
+    void pickPhysicalDevice(vk::raii::Instance& instance, vk::raii::SurfaceKHR& surface);
 
     /**
      * @brief Create the logical device
      *
+     * @param surface Window surface
      * @throws VulkanException if device creation fails
      */
-    void createLogicalDevice();
+    void createLogicalDevice(vk::raii::SurfaceKHR& surface);
 
     /**
      * @brief Check if a physical device is suitable
      *
      * @param device Physical device to check
+     * @param surface Window surface
      * @return true if device is suitable, false otherwise
      */
-    bool isDeviceSuitable(VkPhysicalDevice device) const;
+    bool isDeviceSuitable(vk::PhysicalDevice device, vk::SurfaceKHR surface) const;
 
     /**
      * @brief Find queue families for a device
      *
      * @param device Physical device
+     * @param surface Window surface
      * @return QueueFamilyIndices Queue family indices
      */
-    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) const;
+    QueueFamilyIndices findQueueFamilies(vk::PhysicalDevice device, vk::SurfaceKHR surface) const;
 
     /**
      * @brief Check if a device supports required extensions
@@ -222,22 +228,23 @@ private:
      * @param device Physical device
      * @return true if device supports all required extensions, false otherwise
      */
-    bool checkDeviceExtensionSupport(VkPhysicalDevice device) const;
+    bool checkDeviceExtensionSupport(vk::PhysicalDevice device) const;
 
     /**
      * @brief Rate a physical device based on suitability
      *
      * @param device Physical device to rate
+     * @param surface Window surface
      * @return int Device score (higher is better)
      */
-    int rateDeviceSuitability(VkPhysicalDevice device) const;
+    int rateDeviceSuitability(vk::PhysicalDevice device, vk::SurfaceKHR surface) const;
 
     /**
      * @brief Log device information
      *
      * @param device Physical device
      */
-    void logDeviceInfo(VkPhysicalDevice device) const;
+    void logDeviceInfo(vk::PhysicalDevice device) const;
 };
 
 } // namespace RYRayTracing

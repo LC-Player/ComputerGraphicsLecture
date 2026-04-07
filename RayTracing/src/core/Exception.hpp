@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
 #include <stdexcept>
 #include <string>
 #include <sstream>
@@ -18,21 +18,32 @@ public:
     /**
      * @brief Construct a new VulkanException object
      *
-     * @param result Vulkan error code (VkResult)
+     * @param result Vulkan error code (vk::Result)
      * @param message Description of the error
      * @param function Name of the function where the error occurred
      * @param file Name of the file where the error occurred
      * @param line Line number where the error occurred
      */
-    VulkanException(VkResult result, const std::string& message,
+    VulkanException(vk::Result result, const std::string& message,
+                   const std::string& function, const std::string& file, int line);
+    /**
+     * @brief Construct a new VulkanException object
+     *
+     * @param result Vulkan error code
+     * @param message Description of the error
+     * @param function Name of the function where the error occurred
+     * @param file Name of the file where the error occurred
+     * @param line Line number where the error occurred
+     */
+    VulkanException(std::error_code, const std::string& message,
                    const std::string& function, const std::string& file, int line);
 
     /**
      * @brief Get the Vulkan error code
      *
-     * @return VkResult The Vulkan error code
+     * @return vk::Result The Vulkan error code
      */
-    VkResult getErrorCode() const { return errorCode; }
+    vk::Result getErrorCode() const { return errorCode; }
 
     /**
      * @brief Get the error location (function, file, line)
@@ -46,10 +57,10 @@ public:
      *
      * @return std::string Description of the error code
      */
-    static std::string getErrorString(VkResult result);
+    static std::string getErrorString(vk::Result result);
 
 private:
-    VkResult errorCode;
+    vk::Result errorCode;
     std::string functionName;
     std::string fileName;
     int lineNumber;
@@ -59,17 +70,17 @@ private:
  * @brief Macro to simplify Vulkan error checking
  *
  * This macro checks a Vulkan function result and throws a VulkanException
- * if the result is not VK_SUCCESS.
+ * if the result is not vk::Result::eSuccess.
  *
  * Example usage:
  * @code
- * VK_CHECK_RESULT(vkCreateInstance(&createInfo, nullptr, &instance));
+ * VK_CHECK_RESULT(device.createBuffer(&createInfo, nullptr, &buffer));
  * @endcode
  */
 #define VK_CHECK_RESULT(x) \
     do { \
-        VkResult result = (x); \
-        if (result != VK_SUCCESS) { \
+        vk::Result result = (x); \
+        if (result != vk::Result::eSuccess) { \
             throw VulkanException(result, #x, __FUNCTION__, __FILE__, __LINE__); \
         } \
     } while(0)
@@ -82,12 +93,12 @@ private:
  *
  * Example usage:
  * @code
- * VK_ASSERT(device != VK_NULL_HANDLE, "Device must not be null");
+ * VK_ASSERT(device, "Device must not be null");
  * @endcode
  */
 #define VK_ASSERT(condition, message) \
     if (!(condition)) { \
-        throw VulkanException(VK_ERROR_UNKNOWN, message, __FUNCTION__, __FILE__, __LINE__); \
+        throw VulkanException(vk::Result::eErrorUnknown, message, __FUNCTION__, __FILE__, __LINE__); \
     }
 
 } // namespace RYRayTracing

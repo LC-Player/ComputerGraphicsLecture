@@ -1,4 +1,5 @@
 #include "VulkanInstance.hpp"
+
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <sstream>
@@ -6,10 +7,7 @@
 namespace RYRayTracing {
 
 VulkanInstance::VulkanInstance(const InstanceConfig& config)
-    : instance(VK_NULL_HANDLE)
-    , debugMessenger(VK_NULL_HANDLE)
-    , config(config)
-    , initialized(false) {
+    : config(config) {
 
     LOG_INFO("Creating Vulkan instance: " + config.applicationName);
 
@@ -27,64 +25,7 @@ VulkanInstance::VulkanInstance(const InstanceConfig& config)
     // Create the instance
     createInstance();
 
-    // Setup debug messenger if validation is enabled
-    Validation::setupDebugMessenger(instance, debugMessenger, enableValidation);
-
-    initialized = true;
     LOG_INFO("Vulkan instance created successfully");
-}
-
-VulkanInstance::~VulkanInstance() {
-    LOG_DEBUG("Destroying Vulkan instance");
-
-    // Destroy debug messenger
-    Validation::destroyDebugMessenger(instance, debugMessenger, enableValidation);
-
-    // Destroy instance
-    if (instance != VK_NULL_HANDLE) {
-        vkDestroyInstance(instance, nullptr);
-        instance = VK_NULL_HANDLE;
-    }
-
-    LOG_DEBUG("Vulkan instance destroyed");
-}
-
-VulkanInstance::VulkanInstance(VulkanInstance&& other) noexcept
-    : instance(other.instance)
-    , debugMessenger(other.debugMessenger)
-    , config(std::move(other.config))
-    , validationLayers(std::move(other.validationLayers))
-    , extensions(std::move(other.extensions))
-    , initialized(other.initialized)
-    , enableValidation(other.enableValidation) {
-    other.instance = VK_NULL_HANDLE;
-    other.debugMessenger = VK_NULL_HANDLE;
-    other.initialized = false;
-}
-
-VulkanInstance& VulkanInstance::operator=(VulkanInstance&& other) noexcept {
-    if (this != &other) {
-        // Clean up current resources
-        Validation::destroyDebugMessenger(instance, debugMessenger, enableValidation);
-        if (instance != VK_NULL_HANDLE) {
-            vkDestroyInstance(instance, nullptr);
-        }
-
-        // Move resources from other
-        instance = other.instance;
-        debugMessenger = other.debugMessenger;
-        config = std::move(other.config);
-        validationLayers = std::move(other.validationLayers);
-        extensions = std::move(other.extensions);
-        initialized = other.initialized;
-        enableValidation = other.enableValidation;
-
-        // Reset other
-        other.instance = VK_NULL_HANDLE;
-        other.debugMessenger = VK_NULL_HANDLE;
-        other.initialized = false;
-    }
-    return *this;
 }
 
 void VulkanInstance::createInstance() {
@@ -99,38 +40,46 @@ void VulkanInstance::createInstance() {
     }
 
     // Application info
-    VkApplicationInfo appInfo{};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = config.applicationName.c_str();
-    appInfo.applicationVersion = config.applicationVersion;
-    appInfo.pEngineName = config.engineName.c_str();
-    appInfo.engineVersion = config.engineVersion;
-    appInfo.apiVersion = config.apiVersion;
+    vk::ApplicationInfo appInfo{
+        config.applicationName.c_str(),
+        config.applicationVersion,
+        config.engineName.c_str(),
+        config.engineVersion,
+        config.apiVersion
+    };
 
     // Instance create info
-    VkInstanceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createInfo.pApplicationInfo = &appInfo;
+    vk::InstanceCreateInfo createInfo{
+        {},
+        &appInfo,
+        validationLayers,
+        extensions
+    };
 
-    // Extensions
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
-    createInfo.ppEnabledExtensionNames = extensions.data();
-
-    // Validation layers
+    // Add debug messenger create info if validation is enabled
+    vk::DebugUtilsMessengerCreateInfoEXT debugCreateInfo;
     if (enableValidation) {
-        createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-        createInfo.ppEnabledLayerNames = validationLayers.data();
-
-        // Add debug messenger create info
-        auto debugCreateInfo = Validation::getDebugMessengerCreateInfo();
-        createInfo.pNext = &debugCreateInfo;
-    } else {
-        createInfo.enabledLayerCount = 0;
-        createInfo.pNext = nullptr;
+        debugCreateInfo = Validation::getDebugMessengerCreateInfo();
+        createInfo.setPNext(&debugCreateInfo);
     }
 
     // Create the instance
-    VK_CHECK_RESULT(vkCreateInstance(&createInfo, nullptr, &instance));
+    try {
+        instance = vk::raii::Instance(context, createInfo);
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(), std::string("Failed to create Vulkan instance: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
+    }
+
+    // Setup debug messenger if validation is enabled
+    if (enableValidation) {
+        try {
+            debugMessenger = instance.createDebugUtilsMessengerEXT(debugCreateInfo);
+            LOG_INFO("Debug messenger created successfully");
+        } catch (const vk::SystemError& e) {
+            LOG_WARNING(std::string("Failed to create debug messenger: ") + e.what());
+        }
+    }
 }
 
 void VulkanInstance::setupValidationLayers() {
@@ -153,7 +102,7 @@ std::vector<const char*> VulkanInstance::getRequiredExtensions() {
     const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
     if (glfwExtensions == nullptr || glfwExtensionCount == 0) {
-        throw VulkanException(VK_ERROR_EXTENSION_NOT_PRESENT,
+        throw VulkanException(vk::Result::eErrorExtensionNotPresent,
                             "GLFW failed to get required instance extensions",
                             __FUNCTION__, __FILE__, __LINE__);
     }
@@ -191,15 +140,11 @@ void VulkanInstance::checkExtensionSupport() const {
     LOG_DEBUG("Checking extension support");
 
     // Get available extensions
-    uint32_t extensionCount = 0;
-    VK_CHECK_RESULT(vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr));
+    auto availableExtensions = vk::enumerateInstanceExtensionProperties();
 
-    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
-    VK_CHECK_RESULT(vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, availableExtensions.data()));
-
-    LOG_DEBUG("Available Vulkan extensions: " + std::to_string(extensionCount));
+    LOG_DEBUG("Available Vulkan extensions: " + std::to_string(availableExtensions.size()));
     for (const auto& extension : availableExtensions) {
-        LOG_DEBUG("  - " + std::string(extension.extensionName) +
+        LOG_DEBUG("  - " + std::string(extension.extensionName.data()) +
                  " (version: " + std::to_string(extension.specVersion) + ")");
     }
 
@@ -216,7 +161,7 @@ void VulkanInstance::checkExtensionSupport() const {
         if (!found) {
             std::string errorMsg = "Required extension not found: " + std::string(requiredExt);
             LOG_ERROR(errorMsg);
-            throw VulkanException(VK_ERROR_EXTENSION_NOT_PRESENT,
+            throw VulkanException(vk::Result::eErrorExtensionNotPresent,
                                 errorMsg,
                                 __FUNCTION__, __FILE__, __LINE__);
         }
@@ -231,7 +176,7 @@ void VulkanInstance::checkValidationLayerSupport() const {
     // Use Validation class to check support
     bool supported = Validation::checkSupport();
     if (!supported) {
-        throw VulkanException(VK_ERROR_LAYER_NOT_PRESENT,
+        throw VulkanException(vk::Result::eErrorLayerNotPresent,
                             "Required validation layers not available",
                             __FUNCTION__, __FILE__, __LINE__);
     }

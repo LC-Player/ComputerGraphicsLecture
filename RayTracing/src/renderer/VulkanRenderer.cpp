@@ -16,76 +16,64 @@ VulkanRenderer::VulkanRenderer(VulkanDevice* device, SwapChainManager* swapChain
       framebufferResized(false), initialized(false) {
 }
 
-VulkanRenderer::~VulkanRenderer() {
-    if (initialized) {
-        cleanup();
-    }
-}
-
 void VulkanRenderer::initialize() {
     createSyncObjects();
     createCommandBuffers();
     createFramebuffers();
     initialized = true;
-    Logger::info("VulkanRenderer initialized successfully");
+    LOG_INFO("VulkanRenderer initialized successfully");
 }
 
 void VulkanRenderer::cleanup() {
     if (!initialized) return;
 
-    VkDevice vkDevice = device->get();
-    vkDeviceWaitIdle(vkDevice);
+    device->waitIdle();
 
     cleanupFramebuffers();
     cleanupSyncObjects();
 
     initialized = false;
-    Logger::info("VulkanRenderer cleaned up");
+    LOG_INFO("VulkanRenderer cleaned up");
 }
 
 void VulkanRenderer::recreateSwapChain() {
-    VkDevice vkDevice = device->get();
-    vkDeviceWaitIdle(vkDevice);
+    device->waitIdle();
 
     cleanupFramebuffers();
-
-    // Recreate swap chain (this would be done by SwapChainManager)
-    // swapChain->recreate();
-
     createFramebuffers();
     framebufferResized = false;
-    Logger::debug("Swap chain and framebuffers recreated");
+    LOG_DEBUG("Swap chain and framebuffers recreated");
 }
 
 uint32_t VulkanRenderer::beginFrame() {
-    VkDevice vkDevice = device->get();
-
     // Wait for the fence of the current frame
-    vkWaitForFences(vkDevice, 1, &frames[currentFrame].inFlightFence, VK_TRUE, UINT64_MAX);
+    auto result = device->get().waitForFences(*frames[currentFrame].inFlightFence, true, UINT64_MAX);
+
+    if (result != vk::Result::eSuccess) {
+        throw std::runtime_error{ "waitForFences in drawFrame was failed" };
+    }
 
     // Acquire next image from swap chain
-    uint32_t imageIndex;
-    VkResult result = vkAcquireNextImageKHR(
-        vkDevice, swapChain->get(), UINT64_MAX,
-        frames[currentFrame].imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    uint32_t imageIndex = swapChain->acquireNextImage(*frames[currentFrame].imageAvailableSemaphore);
 
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+    if (imageIndex == UINT32_MAX) {
         recreateSwapChain();
         return beginFrame();
-    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-        throw VulkanException(result, "Failed to acquire swap chain image", __FUNCTION__, __FILE__, __LINE__);
     }
 
     // Check if a previous frame is using this image
-    if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
-        vkWaitForFences(vkDevice, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    if (imagesInFlight[imageIndex]) {
+        auto result = device->get().waitForFences(imagesInFlight[imageIndex], true, UINT64_MAX);
+        if (result != vk::Result::eSuccess) {
+            throw std::runtime_error{ "waitForFences in drawFrame was failed" };
+        }
     }
 
     // Mark the image as now being in use by this frame
-    imagesInFlight[imageIndex] = frames[currentFrame].inFlightFence;
+    imagesInFlight[imageIndex] = *frames[currentFrame].inFlightFence;
 
     // Reset the fence for the current frame
-    vkResetFences(vkDevice, 1, &frames[currentFrame].inFlightFence);
+    device->get().resetFences(*frames[currentFrame].inFlightFence);
 
     // Reset command buffer
     commandManager->resetCommandBuffer(frames[currentFrame].commandBuffer);
@@ -94,167 +82,126 @@ uint32_t VulkanRenderer::beginFrame() {
 }
 
 void VulkanRenderer::endFrame(uint32_t imageIndex) {
-    VkDevice vkDevice = device->get();
-    VkQueue graphicsQueue = device->getGraphicsQueue();
-    VkQueue presentQueue = device->getPresentQueue();
-
     // Submit command buffer
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    vk::SubmitInfo submitInfo;
+    submitInfo.setCommandBuffers(*frames[currentFrame].commandBuffer);
+    submitInfo.setWaitSemaphores(*frames[currentFrame].imageAvailableSemaphore);
+    std::array<vk::PipelineStageFlags, 1> waitStages = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
+    submitInfo.setWaitDstStageMask(waitStages);
+    submitInfo.setSignalSemaphores(*frames[currentFrame].renderFinishedSemaphore);
 
-    VkSemaphore waitSemaphores[] = { frames[currentFrame].imageAvailableSemaphore };
-    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = waitSemaphores;
-    submitInfo.pWaitDstStageMask = waitStages;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &frames[currentFrame].commandBuffer;
-
-    VkSemaphore signalSemaphores[] = { frames[currentFrame].renderFinishedSemaphore };
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = signalSemaphores;
-
-    VkResult result = vkQueueSubmit(graphicsQueue, 1, &submitInfo, frames[currentFrame].inFlightFence);
-    if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to submit draw command buffer", __FUNCTION__, __FILE__, __LINE__);
+    try {
+        device->getGraphicsQueue().submit(submitInfo, *frames[currentFrame].inFlightFence);
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to submit draw command buffer: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
     }
 
     // Present the image
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSemaphores;
-    presentInfo.swapchainCount = 1;
-    auto swapchainget = swapChain->get();
-    presentInfo.pSwapchains = &swapchainget;
-    presentInfo.pImageIndices = &imageIndex;
-
-    result = vkQueuePresentKHR(presentQueue, &presentInfo);
-
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
-        recreateSwapChain();
-    } else if (result != VK_SUCCESS) {
-        throw VulkanException(result, "Failed to present swap chain image", __FUNCTION__, __FILE__, __LINE__);
-    }
+    swapChain->presentImage(imageIndex, *frames[currentFrame].renderFinishedSemaphore);
 
     // Advance to next frame
     currentFrame = (currentFrame + 1) % framesInFlight;
 }
 
 void VulkanRenderer::beginRenderPass(uint32_t imageIndex) {
-    VkCommandBuffer commandBuffer = frames[currentFrame].commandBuffer;
+    auto& commandBuffer = frames[currentFrame].commandBuffer;
 
     // Begin command buffer
-    commandManager->beginCommandBuffer(commandBuffer, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+    commandManager->beginCommandBuffer(commandBuffer, vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
 
     // Set viewport and scissor
-    VkExtent2D extent = swapChain->getExtent();
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(extent.width);
-    viewport.height = static_cast<float>(extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+    auto extent = swapChain->getExtent();
+    vk::Viewport viewport{
+        0.0f,
+        0.0f,
+        static_cast<float>(extent.width),
+        static_cast<float>(extent.height),
+        0.0f,
+        1.0f
+    };
+    commandBuffer.setViewport(0, viewport);
 
-    VkRect2D scissor{};
-    scissor.offset = {0, 0};
-    scissor.extent = extent;
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+    vk::Rect2D scissor{
+        {0, 0},
+        extent
+    };
+    commandBuffer.setScissor(0, scissor);
 
     // Begin render pass
-    VkRect2D renderArea{};
-    renderArea.offset = {0, 0};
-    renderArea.extent = extent;
+    vk::Rect2D renderArea{
+        {0, 0},
+        extent
+    };
 
-    renderPass->begin(commandBuffer, framebuffers[imageIndex], renderArea, getClearValues());
+    renderPass->begin(commandBuffer, *framebuffers[imageIndex], renderArea, getClearValues());
 }
 
 void VulkanRenderer::endRenderPass() {
-    VkCommandBuffer commandBuffer = frames[currentFrame].commandBuffer;
+    auto& commandBuffer = frames[currentFrame].commandBuffer;
     renderPass->end(commandBuffer);
     commandManager->endCommandBuffer(commandBuffer);
 }
 
-VkCommandBuffer VulkanRenderer::getCurrentCommandBuffer() const {
+vk::raii::CommandBuffer& VulkanRenderer::getCurrentCommandBuffer() {
     return frames[currentFrame].commandBuffer;
 }
 
 void VulkanRenderer::createFramebuffers() {
-    const std::vector<VkImageView>& imageViews = swapChain->getImageViews();
-    framebuffers.resize(imageViews.size());
+    auto& imageViews = swapChain->getImageViews();
+    framebuffers.clear();
 
     for (size_t i = 0; i < imageViews.size(); i++) {
-        VkImageView attachments[] = { imageViews[i] };
+        vk::FramebufferCreateInfo framebufferInfo{
+            {},
+            *renderPass->get(),
+            *imageViews[i],
+            swapChain->getExtent().width,
+            swapChain->getExtent().height,
+            1
+        };
 
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = renderPass->get();
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = attachments;
-        framebufferInfo.width = swapChain->getExtent().width;
-        framebufferInfo.height = swapChain->getExtent().height;
-        framebufferInfo.layers = 1;
-
-        VkResult result = vkCreateFramebuffer(device->get(), &framebufferInfo, nullptr, &framebuffers[i]);
-        if (result != VK_SUCCESS) {
-            throw VulkanException(result, "Failed to create framebuffer", __FUNCTION__, __FILE__, __LINE__);
+        try {
+            framebuffers.emplace_back(device->get().createFramebuffer(framebufferInfo));
+        } catch (const vk::SystemError& e) {
+            throw VulkanException(e.code(),
+                                std::string("Failed to create framebuffer: ") + e.what(),
+                                __FUNCTION__, __FILE__, __LINE__);
         }
     }
 
-    Logger::debug("Framebuffers created successfully");
+    LOG_DEBUG("Framebuffers created successfully");
 }
 
 void VulkanRenderer::cleanupFramebuffers() {
-    for (auto framebuffer : framebuffers) {
-        vkDestroyFramebuffer(device->get(), framebuffer, nullptr);
-    }
     framebuffers.clear();
 }
 
 void VulkanRenderer::createSyncObjects() {
-    frames.resize(framesInFlight);
-    imagesInFlight.resize(swapChain->getImageCount(), VK_NULL_HANDLE);
-
-    VkDevice vkDevice = device->get();
+    frames.clear();
+    imagesInFlight.resize(swapChain->getImageCount(), nullptr);
 
     for (size_t i = 0; i < framesInFlight; i++) {
-        VkSemaphoreCreateInfo semaphoreInfo{};
-        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        FrameData frame;
 
-        VkFenceCreateInfo fenceInfo{};
-        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
-        VkResult result = vkCreateSemaphore(vkDevice, &semaphoreInfo, nullptr, &frames[i].imageAvailableSemaphore);
-        if (result != VK_SUCCESS) {
-            throw VulkanException(result, "Failed to create semaphore", __FUNCTION__, __FILE__, __LINE__);
+        try {
+            frame.imageAvailableSemaphore = device->get().createSemaphore({});
+            frame.renderFinishedSemaphore = device->get().createSemaphore({});
+            frame.inFlightFence = device->get().createFence({vk::FenceCreateFlagBits::eSignaled});
+        } catch (const vk::SystemError& e) {
+            throw VulkanException(e.code(),
+                                std::string("Failed to create sync objects: ") + e.what(),
+                                __FUNCTION__, __FILE__, __LINE__);
         }
 
-        result = vkCreateSemaphore(vkDevice, &semaphoreInfo, nullptr, &frames[i].renderFinishedSemaphore);
-        if (result != VK_SUCCESS) {
-            throw VulkanException(result, "Failed to create semaphore", __FUNCTION__, __FILE__, __LINE__);
-        }
-
-        result = vkCreateFence(vkDevice, &fenceInfo, nullptr, &frames[i].inFlightFence);
-        if (result != VK_SUCCESS) {
-            throw VulkanException(result, "Failed to create fence", __FUNCTION__, __FILE__, __LINE__);
-        }
+        frames.push_back(std::move(frame));
     }
 
-    Logger::debug("Synchronization objects created successfully");
+    LOG_DEBUG("Synchronization objects created successfully");
 }
 
 void VulkanRenderer::cleanupSyncObjects() {
-    VkDevice vkDevice = device->get();
-
-    for (size_t i = 0; i < frames.size(); i++) {
-        vkDestroySemaphore(vkDevice, frames[i].imageAvailableSemaphore, nullptr);
-        vkDestroySemaphore(vkDevice, frames[i].renderFinishedSemaphore, nullptr);
-        vkDestroyFence(vkDevice, frames[i].inFlightFence, nullptr);
-    }
-
     frames.clear();
     imagesInFlight.clear();
 }
@@ -263,12 +210,12 @@ void VulkanRenderer::createCommandBuffers() {
     for (size_t i = 0; i < framesInFlight; i++) {
         frames[i].commandBuffer = commandManager->allocateCommandBuffer();
     }
-    Logger::debug("Command buffers created for each frame");
+    LOG_DEBUG("Command buffers created for each frame");
 }
 
-std::vector<VkClearValue> VulkanRenderer::getClearValues() const {
-    std::vector<VkClearValue> clearValues(1);
-    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // Black background
+std::vector<vk::ClearValue> VulkanRenderer::getClearValues() const {
+    std::vector<vk::ClearValue> clearValues(1);
+    clearValues[0].color = vk::ClearColorValue{0.0f, 0.0f, 0.0f, 1.0f}; // Black background
     return clearValues;
 }
 

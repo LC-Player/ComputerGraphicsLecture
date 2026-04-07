@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
 #include <vector>
 #include <string>
 #include "core/Logger.hpp"
@@ -37,60 +37,9 @@ public:
     /**
      * @brief Get the debug messenger creation info
      *
-     * @return VkDebugUtilsMessengerCreateInfoEXT Debug messenger creation info
+     * @return vk::DebugUtilsMessengerCreateInfoEXT Debug messenger creation info
      */
-    static VkDebugUtilsMessengerCreateInfoEXT getDebugMessengerCreateInfo();
-
-    /**
-     * @brief Create a debug utils messenger
-     *
-     * @param instance Vulkan instance
-     * @param pCreateInfo Creation info
-     * @param pAllocator Allocation callbacks (optional)
-     * @param pDebugMessenger Output debug messenger
-     * @return VkResult Creation result
-     */
-    static VkResult createDebugUtilsMessengerEXT(
-        VkInstance instance,
-        const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-        const VkAllocationCallbacks* pAllocator,
-        VkDebugUtilsMessengerEXT* pDebugMessenger);
-
-    /**
-     * @brief Destroy a debug utils messenger
-     *
-     * @param instance Vulkan instance
-     * @param debugMessenger Debug messenger to destroy
-     * @param pAllocator Allocation callbacks (optional)
-     */
-    static void destroyDebugUtilsMessengerEXT(
-        VkInstance instance,
-        VkDebugUtilsMessengerEXT debugMessenger,
-        const VkAllocationCallbacks* pAllocator);
-
-    /**
-     * @brief Setup debug messenger for an instance
-     *
-     * @param instance Vulkan instance
-     * @param debugMessenger Output debug messenger
-     * @param enableValidation Whether to enable validation layers
-     */
-    static void setupDebugMessenger(
-        VkInstance instance,
-        VkDebugUtilsMessengerEXT& debugMessenger,
-        bool enableValidation);
-
-    /**
-     * @brief Destroy debug messenger
-     *
-     * @param instance Vulkan instance
-     * @param debugMessenger Debug messenger to destroy
-     * @param enableValidation Whether validation was enabled
-     */
-    static void destroyDebugMessenger(
-        VkInstance instance,
-        VkDebugUtilsMessengerEXT debugMessenger,
-        bool enableValidation);
+    static vk::DebugUtilsMessengerCreateInfoEXT getDebugMessengerCreateInfo();
 
     /**
      * @brief Check if validation should be enabled based on build configuration
@@ -118,7 +67,7 @@ private:
      * @param severity Message severity
      * @return std::string String representation
      */
-    static std::string severityToString(VkDebugUtilsMessageSeverityFlagBitsEXT severity);
+    static std::string severityToString(vk::DebugUtilsMessageSeverityFlagBitsEXT severity);
 
     /**
      * @brief Convert message type to string
@@ -126,7 +75,7 @@ private:
      * @param type Message type
      * @return std::string String representation
      */
-    static std::string typeToString(VkDebugUtilsMessageTypeFlagsEXT type);
+    static std::string typeToString(vk::DebugUtilsMessageTypeFlagsEXT type);
 };
 
 } // namespace RYRayTracing

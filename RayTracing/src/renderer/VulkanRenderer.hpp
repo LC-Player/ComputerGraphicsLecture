@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include "core/Exception.hpp"
 #include "core/Logger.hpp"
@@ -19,21 +20,21 @@ class CommandManager;
  */
 struct RendererConfig {
     uint32_t maxFramesInFlight = 2;
-    VkFormat colorFormat = VK_FORMAT_B8G8R8A8_SRGB;
+    vk::Format colorFormat = vk::Format::eB8G8R8A8Srgb;
 };
 
 /**
  * @brief Frame data for synchronization
  */
 struct FrameData {
-    VkSemaphore imageAvailableSemaphore;
-    VkSemaphore renderFinishedSemaphore;
-    VkFence inFlightFence;
-    VkCommandBuffer commandBuffer;
+    vk::raii::Semaphore imageAvailableSemaphore = nullptr;
+    vk::raii::Semaphore renderFinishedSemaphore = nullptr;
+    vk::raii::Fence inFlightFence = nullptr;
+    vk::raii::CommandBuffer commandBuffer = nullptr;
 };
 
 /**
- * @brief Vulkan renderer
+ * @brief Vulkan renderer using vk::raii
  *
  * High-level renderer that coordinates all Vulkan components.
  */
@@ -56,7 +57,7 @@ public:
     /**
      * @brief Destroy the VulkanRenderer object
      */
-    ~VulkanRenderer();
+    ~VulkanRenderer() = default;
 
     // Delete copy constructor and assignment operator
     VulkanRenderer(const VulkanRenderer&) = delete;
@@ -120,9 +121,9 @@ public:
     /**
      * @brief Get current command buffer
      *
-     * @return VkCommandBuffer Current command buffer
+     * @return vk::raii::CommandBuffer& Current command buffer
      */
-    VkCommandBuffer getCurrentCommandBuffer() const;
+    vk::raii::CommandBuffer& getCurrentCommandBuffer();
 
     /**
      * @brief Check if framebuffer needs resize
@@ -145,8 +146,8 @@ private:
     RendererConfig config;
 
     std::vector<FrameData> frames;
-    std::vector<VkFence> imagesInFlight;
-    std::vector<VkFramebuffer> framebuffers;
+    std::vector<vk::Fence> imagesInFlight;
+    std::vector<vk::raii::Framebuffer> framebuffers;
 
     size_t currentFrame;
     size_t framesInFlight;
@@ -181,9 +182,9 @@ private:
     /**
      * @brief Get clear values for render pass
      *
-     * @return std::vector<VkClearValue> Clear values
+     * @return std::vector<vk::ClearValue> Clear values
      */
-    std::vector<VkClearValue> getClearValues() const;
+    std::vector<vk::ClearValue> getClearValues() const;
 };
 
 } // namespace RYRayTracing

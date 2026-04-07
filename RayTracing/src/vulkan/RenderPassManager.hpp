@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include "core/Exception.hpp"
 #include "core/Logger.hpp"
@@ -11,16 +12,16 @@ namespace RYRayTracing {
  * @brief Render pass configuration
  */
 struct RenderPassConfig {
-    VkFormat colorFormat = VK_FORMAT_B8G8R8A8_SRGB;
-    VkFormat depthFormat = VK_FORMAT_UNDEFINED; // No depth by default
+    vk::Format colorFormat = vk::Format::eB8G8R8A8Srgb;
+    vk::Format depthFormat = vk::Format::eUndefined; // No depth by default
     bool clearColors = true;
     bool clearDepth = true;
-    VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VkImageLayout finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    vk::ImageLayout initialLayout = vk::ImageLayout::eUndefined;
+    vk::ImageLayout finalLayout = vk::ImageLayout::ePresentSrcKHR;
 };
 
 /**
- * @brief Render pass manager
+ * @brief Render pass manager using vk::raii
  *
  * Manages Vulkan render pass creation and configuration.
  */
@@ -32,12 +33,12 @@ public:
      * @param device Vulkan logical device
      * @param config Render pass configuration
      */
-    RenderPassManager(VkDevice device, const RenderPassConfig& config = RenderPassConfig());
+    RenderPassManager(vk::raii::Device& device, const RenderPassConfig& config = RenderPassConfig());
 
     /**
      * @brief Destroy the RenderPassManager object
      */
-    ~RenderPassManager();
+    ~RenderPassManager() = default;
 
     // Delete copy constructor and assignment operator
     RenderPassManager(const RenderPassManager&) = delete;
@@ -46,19 +47,20 @@ public:
     /**
      * @brief Move constructor
      */
-    RenderPassManager(RenderPassManager&& other) noexcept;
+    RenderPassManager(RenderPassManager&& other) noexcept = default;
 
     /**
      * @brief Move assignment operator
      */
-    RenderPassManager& operator=(RenderPassManager&& other) noexcept;
+    RenderPassManager& operator=(RenderPassManager&& other) noexcept = default;
 
     /**
      * @brief Get the render pass handle
      *
-     * @return VkRenderPass Render pass
+     * @return vk::raii::RenderPass& Render pass
      */
-    VkRenderPass get() const { return renderPass; }
+    vk::raii::RenderPass& get() { return renderPass; }
+    const vk::raii::RenderPass& get() const { return renderPass; }
 
     /**
      * @brief Get the render pass configuration
@@ -75,21 +77,20 @@ public:
      * @param renderArea Render area
      * @param clearValues Clear values (optional)
      */
-    void begin(VkCommandBuffer commandBuffer, VkFramebuffer framebuffer,
-               VkRect2D renderArea, const std::vector<VkClearValue>& clearValues = {});
+    void begin(vk::raii::CommandBuffer& commandBuffer, vk::Framebuffer framebuffer,
+               vk::Rect2D renderArea, const std::vector<vk::ClearValue>& clearValues = {});
 
     /**
      * @brief End the render pass
      *
      * @param commandBuffer Command buffer
      */
-    void end(VkCommandBuffer commandBuffer);
+    void end(vk::raii::CommandBuffer& commandBuffer);
 
 private:
-    VkDevice device;
-    VkRenderPass renderPass;
+    vk::raii::Device* device;
+    vk::raii::RenderPass renderPass = nullptr;
     RenderPassConfig config;
-    bool initialized;
 
     /**
      * @brief Create the render pass

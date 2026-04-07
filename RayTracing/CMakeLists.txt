@@ -58,7 +58,13 @@ target_include_directories(RayTracing PRIVATE
 # Link dependencies
 target_link_libraries(RayTracing PRIVATE
         glfw
-        ${Vulkan_LIBRARIES}
+        Vulkan::Vulkan
+)
+
+# Enable C++17 for vk::raii
+set_target_properties(RayTracing PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
 )
 
 # Validation layers configuration

@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include <string>
 #include <unordered_map>
@@ -14,50 +15,50 @@ namespace RYRayTracing {
  */
 struct PipelineConfig {
     // Shader stages
-    VkShaderModule vertexShader = VK_NULL_HANDLE;
-    VkShaderModule fragmentShader = VK_NULL_HANDLE;
+    vk::ShaderModule vertexShader = nullptr;
+    vk::ShaderModule fragmentShader = nullptr;
     std::string vertexEntryPoint = "main";
     std::string fragmentEntryPoint = "main";
 
     // Vertex input state
-    VkVertexInputBindingDescription vertexBindingDescription = {};
-    std::vector<VkVertexInputAttributeDescription> vertexAttributeDescriptions;
+    vk::VertexInputBindingDescription vertexBindingDescription = {};
+    std::vector<vk::VertexInputAttributeDescription> vertexAttributeDescriptions;
 
     // Input assembly
-    VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList;
     bool primitiveRestartEnable = false;
 
     // Viewport and scissor (dynamic)
     bool dynamicViewportAndScissor = true;
 
     // Rasterization
-    VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
-    VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT;
-    VkFrontFace frontFace = VK_FRONT_FACE_CLOCKWISE;
+    vk::PolygonMode polygonMode = vk::PolygonMode::eFill;
+    vk::CullModeFlags cullMode = vk::CullModeFlagBits::eNone; // TODO: now set to eNone for debugging. set to eBack instead
+    vk::FrontFace frontFace = vk::FrontFace::eClockwise;
     float lineWidth = 1.0f;
 
     // Multisampling
-    VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    vk::SampleCountFlagBits rasterizationSamples = vk::SampleCountFlagBits::e1;
 
     // Color blending
     bool blendEnable = false;
-    VkBlendFactor srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-    VkBlendFactor dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    VkBlendOp colorBlendOp = VK_BLEND_OP_ADD;
-    VkBlendFactor srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    VkBlendFactor dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-    VkBlendOp alphaBlendOp = VK_BLEND_OP_ADD;
+    vk::BlendFactor srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
+    vk::BlendFactor dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+    vk::BlendOp colorBlendOp = vk::BlendOp::eAdd;
+    vk::BlendFactor srcAlphaBlendFactor = vk::BlendFactor::eOne;
+    vk::BlendFactor dstAlphaBlendFactor = vk::BlendFactor::eZero;
+    vk::BlendOp alphaBlendOp = vk::BlendOp::eAdd;
 
     // Pipeline layout
-    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+    vk::PipelineLayout pipelineLayout = nullptr;
 
     // Render pass
-    VkRenderPass renderPass = VK_NULL_HANDLE;
+    vk::RenderPass renderPass = nullptr;
     uint32_t subpass = 0;
 };
 
 /**
- * @brief Pipeline manager
+ * @brief Pipeline manager using vk::raii
  *
  * Manages Vulkan graphics pipeline creation and caching.
  */
@@ -68,12 +69,12 @@ public:
      *
      * @param device Vulkan logical device
      */
-    explicit PipelineManager(VkDevice device);
+    explicit PipelineManager(vk::raii::Device& device);
 
     /**
      * @brief Destroy the PipelineManager object
      */
-    ~PipelineManager();
+    ~PipelineManager() = default;
 
     // Delete copy constructor and assignment operator
     PipelineManager(const PipelineManager&) = delete;
@@ -82,29 +83,29 @@ public:
     /**
      * @brief Move constructor
      */
-    PipelineManager(PipelineManager&& other) noexcept;
+    PipelineManager(PipelineManager&& other) noexcept = default;
 
     /**
      * @brief Move assignment operator
      */
-    PipelineManager& operator=(PipelineManager&& other) noexcept;
+    PipelineManager& operator=(PipelineManager&& other) noexcept = default;
 
     /**
      * @brief Create a graphics pipeline
      *
      * @param name Pipeline name for caching
      * @param config Pipeline configuration
-     * @return VkPipeline Graphics pipeline
+     * @return vk::raii::Pipeline& Graphics pipeline
      */
-    VkPipeline createPipeline(const std::string& name, const PipelineConfig& config);
+    vk::raii::Pipeline& createPipeline(const std::string& name, const PipelineConfig& config);
 
     /**
      * @brief Get a cached pipeline by name
      *
      * @param name Pipeline name
-     * @return VkPipeline Graphics pipeline (VK_NULL_HANDLE if not found)
+     * @return vk::raii::Pipeline* Graphics pipeline (nullptr if not found)
      */
-    VkPipeline getPipeline(const std::string& name) const;
+    vk::raii::Pipeline* getPipeline(const std::string& name);
 
     /**
      * @brief Check if a pipeline exists
@@ -127,9 +128,8 @@ public:
     void destroyAllPipelines();
 
 private:
-    VkDevice device;
-    std::unordered_map<std::string, VkPipeline> pipelines;
-    bool initialized;
+    vk::raii::Device* device;
+    std::unordered_map<std::string, vk::raii::Pipeline> pipelines;
 
     /**
      * @brief Create shader stage info
@@ -137,10 +137,10 @@ private:
      * @param shader Shader module
      * @param stage Shader stage
      * @param entryPoint Entry point name
-     * @return VkPipelineShaderStageCreateInfo Shader stage create info
+     * @return vk::PipelineShaderStageCreateInfo Shader stage create info
      */
-    VkPipelineShaderStageCreateInfo createShaderStageInfo(
-        VkShaderModule shader, VkShaderStageFlagBits stage, const std::string& entryPoint) const;
+    vk::PipelineShaderStageCreateInfo createShaderStageInfo(
+        vk::ShaderModule shader, vk::ShaderStageFlagBits stage, const std::string& entryPoint) const;
 };
 
 } // namespace RYRayTracing

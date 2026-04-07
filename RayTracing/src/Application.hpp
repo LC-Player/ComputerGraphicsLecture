@@ -1,7 +1,9 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
+#include <memory>
 
 // Forward declarations
 namespace RYRayTracing {
@@ -11,13 +13,12 @@ namespace RYRayTracing {
     class SwapChainManager;
     class Buffer;
     class ShaderModule;
+    class RenderPassManager;
+    class PipelineManager;
+    class CommandManager;
 }
 
 namespace RYRayTracing {
-
-// Maximum number of frames that can be processed concurrently
-// We'll set this to the swapchain image count at runtime
-static constexpr int MAX_FRAMES_IN_FLIGHT = 0; // Will be set dynamically
 
 /**
  * @brief Main application class for rendering a triangle
@@ -50,32 +51,36 @@ public:
 
 private:
     // Vulkan objects
-    WindowManager* windowManager;
-    VulkanInstance* vulkanInstance;
-    VulkanDevice* vulkanDevice;
-    SwapChainManager* swapChainManager;
-    VkSurfaceKHR surface;
+    std::unique_ptr<WindowManager> windowManager;
+    std::unique_ptr<VulkanInstance> vulkanInstance;
+    vk::raii::SurfaceKHR surface = nullptr;
+    std::unique_ptr<VulkanDevice> vulkanDevice;
+    std::unique_ptr<SwapChainManager> swapChainManager;
+    std::unique_ptr<RenderPassManager> renderPassManager;
+    std::unique_ptr<PipelineManager> pipelineManager;
+    std::unique_ptr<CommandManager> commandManager;
 
     // Vertex buffer for triangle
-    Buffer* vertexBuffer;
+    std::unique_ptr<Buffer> vertexBuffer;
 
     // Shaders
-    ShaderModule* vertexShader;
-    ShaderModule* fragmentShader;
+    std::unique_ptr<ShaderModule> vertexShader;
+    std::unique_ptr<ShaderModule> fragmentShader;
 
-    // Rendering resources
-    VkPipelineLayout pipelineLayout;
-    VkPipeline graphicsPipeline;
-    VkRenderPass renderPass;
-    VkCommandPool commandPool;
-    std::vector<VkCommandBuffer> commandBuffers;
-    std::vector<VkFramebuffer> swapChainFramebuffers;
+    // Pipeline layout
+    vk::raii::PipelineLayout pipelineLayout = nullptr;
+
+    // Framebuffers
+    std::vector<vk::raii::Framebuffer> swapChainFramebuffers;
+
+    // Command buffers
+    std::vector<vk::raii::CommandBuffer> commandBuffers;
 
     // Sync objects - one set per swapchain image
-    std::vector<VkSemaphore> imageAvailableSemaphores;
-    std::vector<VkSemaphore> renderFinishedSemaphores;
-    std::vector<VkFence> inFlightFences;
-    std::vector<VkFence> imagesInFlight; // Track which fence is used for each swapchain image
+    std::vector<vk::raii::Semaphore> imageAvailableSemaphores;
+    std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
+    std::vector<vk::raii::Fence> inFlightFences;
+    std::vector<vk::Fence> imagesInFlight; // Track which fence is used for each swapchain image
 
     // Current frame index
     size_t currentFrame;
@@ -139,11 +144,6 @@ private:
      * @brief Create graphics pipeline
      */
     void createGraphicsPipeline();
-
-    /**
-     * @brief Internal graphics pipeline creation
-     */
-    void createGraphicsPipelineInternal();
 
     /**
      * @brief Create framebuffers

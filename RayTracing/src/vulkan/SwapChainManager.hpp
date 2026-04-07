@@ -1,6 +1,7 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include <algorithm>
 #include "core/Exception.hpp"
@@ -15,21 +16,21 @@ class VulkanDevice;
  * @brief Swap chain creation parameters
  */
 struct SwapChainConfig {
-    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
-    VkSurfaceFormatKHR surfaceFormat = { VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+    vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
+    vk::SurfaceFormatKHR surfaceFormat = { vk::Format::eB8G8R8A8Srgb, vk::ColorSpaceKHR::eSrgbNonlinear };
     uint32_t minImageCount = 2; // Double buffering by default
-    VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    bool clipped = VK_TRUE;
+    vk::ImageUsageFlags imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+    vk::CompositeAlphaFlagBitsKHR compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+    bool clipped = true;
 };
 
 /**
  * @brief Swap chain support details query result
  */
 struct SwapChainSupportDetails {
-    VkSurfaceCapabilitiesKHR capabilities;
-    std::vector<VkSurfaceFormatKHR> formats;
-    std::vector<VkPresentModeKHR> presentModes;
+    vk::SurfaceCapabilitiesKHR capabilities;
+    std::vector<vk::SurfaceFormatKHR> formats;
+    std::vector<vk::PresentModeKHR> presentModes;
 
     /**
      * @brief Check if swap chain is adequately supported
@@ -42,7 +43,7 @@ struct SwapChainSupportDetails {
 };
 
 /**
- * @brief Swap chain manager
+ * @brief Swap chain manager using vk::raii
  *
  * Manages the creation, recreation, and destruction of swap chains.
  */
@@ -57,14 +58,14 @@ public:
      * @param height Swap chain height
      * @param config Swap chain configuration
      */
-    SwapChainManager(VulkanDevice* device, VkSurfaceKHR surface,
+    SwapChainManager(VulkanDevice* device, vk::raii::SurfaceKHR& surface,
                      uint32_t width, uint32_t height,
                      const SwapChainConfig& config = SwapChainConfig());
 
     /**
      * @brief Destroy the SwapChainManager object
      */
-    ~SwapChainManager();
+    ~SwapChainManager() = default;
 
     // Delete copy constructor and assignment operator
     SwapChainManager(const SwapChainManager&) = delete;
@@ -73,47 +74,49 @@ public:
     /**
      * @brief Move constructor
      */
-    SwapChainManager(SwapChainManager&& other) noexcept;
+    SwapChainManager(SwapChainManager&& other) noexcept = default;
 
     /**
      * @brief Move assignment operator
      */
-    SwapChainManager& operator=(SwapChainManager&& other) noexcept;
+    SwapChainManager& operator=(SwapChainManager&& other) noexcept = default;
 
     /**
      * @brief Get the swap chain handle
      *
-     * @return VkSwapchainKHR Swap chain handle
+     * @return vk::raii::SwapchainKHR& Swap chain handle
      */
-    VkSwapchainKHR get() const { return swapChain; }
+    vk::raii::SwapchainKHR& get() { return swapChain; }
+    const vk::raii::SwapchainKHR& get() const { return swapChain; }
 
     /**
      * @brief Get the swap chain images
      *
-     * @return const std::vector<VkImage>& Swap chain images
+     * @return const std::vector<vk::Image>& Swap chain images
      */
-    const std::vector<VkImage>& getImages() const { return images; }
+    const std::vector<vk::Image>& getImages() const { return images; }
 
     /**
      * @brief Get the swap chain image views
      *
-     * @return const std::vector<VkImageView>& Swap chain image views
+     * @return std::vector<vk::raii::ImageView>& Swap chain image views
      */
-    const std::vector<VkImageView>& getImageViews() const { return imageViews; }
+    std::vector<vk::raii::ImageView>& getImageViews() { return imageViews; }
+    const std::vector<vk::raii::ImageView>& getImageViews() const { return imageViews; }
 
     /**
      * @brief Get the swap chain image format
      *
-     * @return VkFormat Image format
+     * @return vk::Format Image format
      */
-    VkFormat getImageFormat() const { return imageFormat; }
+    vk::Format getImageFormat() const { return imageFormat; }
 
     /**
      * @brief Get the swap chain extent
      *
-     * @return VkExtent2D Swap chain extent
+     * @return vk::Extent2D Swap chain extent
      */
-    VkExtent2D getExtent() const { return extent; }
+    vk::Extent2D getExtent() const { return extent; }
 
     /**
      * @brief Get the number of images in the swap chain
@@ -147,8 +150,8 @@ public:
      * @return uint32_t Image index
      * @throws VulkanException if image acquisition fails
      */
-    uint32_t acquireNextImage(VkSemaphore semaphore = VK_NULL_HANDLE,
-                              VkFence fence = VK_NULL_HANDLE) const;
+    uint32_t acquireNextImage(vk::Semaphore semaphore = nullptr,
+                              vk::Fence fence = nullptr) const;
 
     /**
      * @brief Present an image to the swap chain
@@ -157,7 +160,7 @@ public:
      * @param waitSemaphore Semaphore to wait on before presenting
      * @throws VulkanException if presentation fails
      */
-    void presentImage(uint32_t imageIndex, VkSemaphore waitSemaphore = VK_NULL_HANDLE) const;
+    void presentImage(uint32_t imageIndex, vk::Semaphore waitSemaphore = nullptr) const;
 
     /**
      * @brief Query swap chain support details
@@ -166,21 +169,15 @@ public:
      */
     SwapChainSupportDetails querySupport() const;
 
-    /**
-     * @brief Cleanup swap chain resources (images and image views)
-     */
-    void cleanupResources();
-
 private:
-    VulkanDevice* device;
-    VkSurfaceKHR surface;
-    VkSwapchainKHR swapChain;
-    std::vector<VkImage> images;
-    std::vector<VkImageView> imageViews;
-    VkFormat imageFormat;
-    VkExtent2D extent;
+    VulkanDevice* device = nullptr;
+    vk::raii::SurfaceKHR* surface = nullptr;
+    vk::raii::SwapchainKHR swapChain = nullptr;
+    std::vector<vk::Image> images;
+    std::vector<vk::raii::ImageView> imageViews;
+    vk::Format imageFormat;
+    vk::Extent2D extent;
     SwapChainConfig config;
-    bool initialized;
 
     /**
      * @brief Create the swap chain
@@ -200,17 +197,17 @@ private:
      * @brief Choose the best surface format
      *
      * @param availableFormats Available surface formats
-     * @return VkSurfaceFormatKHR Chosen surface format
+     * @return vk::SurfaceFormatKHR Chosen surface format
      */
-    VkSurfaceFormatKHR chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) const;
+    vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) const;
 
     /**
      * @brief Choose the best present mode
      *
      * @param availablePresentModes Available present modes
-     * @return VkPresentModeKHR Chosen present mode
+     * @return vk::PresentModeKHR Chosen present mode
      */
-    VkPresentModeKHR choosePresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) const;
+    vk::PresentModeKHR choosePresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) const;
 
     /**
      * @brief Choose the swap extent
@@ -218,9 +215,9 @@ private:
      * @param capabilities Surface capabilities
      * @param width Desired width
      * @param height Desired height
-     * @return VkExtent2D Chosen extent
+     * @return vk::Extent2D Chosen extent
      */
-    VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities,
+    vk::Extent2D chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities,
                            uint32_t width, uint32_t height) const;
 
     /**
@@ -229,7 +226,7 @@ private:
      * @param capabilities Surface capabilities
      * @return uint32_t Number of images
      */
-    uint32_t chooseImageCount(const VkSurfaceCapabilitiesKHR& capabilities) const;
+    uint32_t chooseImageCount(const vk::SurfaceCapabilitiesKHR& capabilities) const;
 };
 
 } // namespace RYRayTracing
