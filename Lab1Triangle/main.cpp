@@ -10,6 +10,7 @@
 #include <vulkan/vulkan_raii.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -313,11 +314,15 @@ private:
 
         ImGui::Begin("Transform");
 
-        ImGui::SetWindowFontScale(3);
+        ImGui::SetWindowFontScale(2);
 
-        ImGui::DragFloat3("Translation", &m_transform.translation.x, 0.01f);
-        ImGui::DragFloat3("Rotation", &m_transform.rotation.x, 0.01f);
-        ImGui::DragFloat3("Scale", &m_transform.scale.x, 0.01f);
+        ImGui::DragFloat3("Translation", glm::value_ptr(m_transform.translation), 0.01f);
+        ImGui::DragFloat3("Rotation", glm::value_ptr(m_transform.rotation), 0.01f);
+        ImGui::DragFloat3("Scale", glm::value_ptr(m_transform.scale), 0.01f);
+
+        ImGui::ColorEdit3("Color1", glm::value_ptr(m_vertices[0].color));
+        ImGui::ColorEdit3("Color2", glm::value_ptr(m_vertices[1].color));
+        ImGui::ColorEdit3("Color3", glm::value_ptr(m_vertices[2].color));
 
         ImGui::End();
 
@@ -1031,7 +1036,7 @@ private:
     vk::SurfaceFormatKHR m_swapChainSurfaceFormat;
     std::vector<vk::Image> m_swapChainImages = {};
 
-    const std::vector<Vertex> m_vertices = {
+    std::vector<Vertex> m_vertices = {
             {{0.0f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
             {{0.5f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
             {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}}
