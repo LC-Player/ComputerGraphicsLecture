@@ -4,7 +4,7 @@
 namespace RYRayTracing {
 
 RenderPassManager::RenderPassManager(vk::raii::Device& device, const RenderPassConfig& config)
-    : device(&device), config(config) {
+    : device(device), config(config) {
     createRenderPass();
     LOG_INFO("RenderPassManager initialized successfully");
 }
@@ -37,6 +37,7 @@ void RenderPassManager::createRenderPass() {
     dependency.setDstSubpass(0);
     dependency.setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
     dependency.setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    dependency.setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite);
     dependency.setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite);
 
     // Create render pass
@@ -46,7 +47,7 @@ void RenderPassManager::createRenderPass() {
     createInfo.setDependencies(dependency);
 
     try {
-        renderPass = device->createRenderPass(createInfo);
+        renderPass = device.createRenderPass(createInfo);
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(), std::string("Failed to create render pass: ") + e.what(),
                             __FUNCTION__, __FILE__, __LINE__);

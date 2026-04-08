@@ -248,11 +248,6 @@ int VulkanDevice::rateDeviceSuitability(vk::PhysicalDevice device, vk::SurfaceKH
     // Maximum possible size of textures affects graphics quality
     score += deviceProperties.limits.maxImageDimension2D;
 
-    // Application can't function without geometry shaders
-    if (!deviceFeatures.geometryShader) {
-        return 0;
-    }
-
     // Check if device is suitable
     if (!isDeviceSuitable(device, surface)) {
         return 0;

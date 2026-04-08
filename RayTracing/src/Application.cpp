@@ -92,6 +92,7 @@ void Application::initVulkan() {
     createFramebuffers();
     createCommandPool();
     createVertexBuffer();
+    createIndexBuffer();
     createCommandBuffers();
     createSyncObjects();
 
@@ -113,19 +114,21 @@ void Application::cleanup() {
     cleanupSyncObjects();
 
     // Clear unique_ptrs (automatic cleanup)
+    // IMPORTANT: Destroy resources in reverse order of creation
+    // Surface must be destroyed BEFORE Instance (Vulkan spec requirement)
     commandBuffers.clear();
     pipelineLayout = nullptr;
     fragmentShader.reset();
     vertexShader.reset();
     vertexBuffer.reset();
+    indexBuffer.reset();
     commandManager.reset();
     pipelineManager.reset();
     renderPassManager.reset();
     swapChainManager.reset();
     vulkanDevice.reset();
-    surface = nullptr;
-    vulkanInstance.reset();
-    windowManager.reset();
+    windowManager.reset();  // Destroy WindowManager (and Surface) BEFORE Instance
+    vulkanInstance.reset(); // Destroy Instance AFTER Surface
 
     LOG_INFO("Cleanup completed");
 }
@@ -148,14 +151,14 @@ void Application::createInstance() {
 void Application::createDevice() {
     LOG_INFO("Creating Vulkan device...");
 
-    // Create surface
-    surface = windowManager->createSurface(vulkanInstance->get());
+    // Create surface through window manager
+    windowManager->createSurface(vulkanInstance->get());
     LOG_INFO("Vulkan surface created");
 
     DeviceConfig deviceConfig;
     deviceConfig.requiredFeatures.samplerAnisotropy = true;
 
-    vulkanDevice = std::make_unique<VulkanDevice>(vulkanInstance->get(), surface, deviceConfig);
+    vulkanDevice = std::make_unique<VulkanDevice>(vulkanInstance->get(), windowManager->getSurface(), deviceConfig);
     LOG_INFO("Vulkan device created");
 }
 
@@ -163,7 +166,7 @@ void Application::createSwapChain() {
     LOG_INFO("Creating swap chain...");
 
     swapChainManager = std::make_unique<SwapChainManager>(
-        vulkanDevice.get(), surface, windowWidth, windowHeight);
+        *vulkanDevice, windowManager->getSurface(), windowWidth, windowHeight);
 
     LOG_INFO("Swap chain created");
 }
@@ -311,6 +314,18 @@ void Application::createVertexBuffer() {
     LOG_INFO("Vertex buffer created");
 }
 
+void Application::createIndexBuffer() {
+    LOG_INFO("Creating index buffer...");
+
+    // Triangle indices
+    std::vector<uint32_t> indices = {0, 1, 2};
+
+    indexBuffer = std::make_unique<Buffer>(
+        Buffer::createIndexBuffer(vulkanDevice.get(), indices.data(), sizeof(uint32_t) * indices.size()));
+
+    LOG_INFO("Index buffer created");
+}
+
 void Application::createCommandBuffers() {
     LOG_INFO("Creating command buffers...");
 
@@ -358,8 +373,11 @@ void Application::createCommandBuffers() {
         vk::DeviceSize offsets[] = {0};
         commandBuffers[i].bindVertexBuffers(0, vertexBuffers, offsets);
 
-        // Draw triangle
-        commandBuffers[i].draw(3, 1, 0, 0);
+        // Bind index buffer
+        commandBuffers[i].bindIndexBuffer(*indexBuffer->get(), 0, vk::IndexType::eUint32);
+
+        // Draw indexed triangle
+        commandBuffers[i].drawIndexed(3, 1, 0, 0, 0);
 
         // End render pass
         commandBuffers[i].endRenderPass();
@@ -488,13 +506,6 @@ void Application::mainLoop() {
 
     vulkanDevice->waitIdle();
     LOG_INFO("Main loop exited");
-}
-
-void Application::onWindowResize(int width, int height, void* userData) {
-    auto app = reinterpret_cast<Application*>(userData);
-    app->framebufferResized = true;
-    app->windowWidth = width;
-    app->windowHeight = height;
 }
 
 } // namespace RYRayTracing

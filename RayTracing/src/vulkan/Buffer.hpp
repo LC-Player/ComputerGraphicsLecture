@@ -175,7 +175,7 @@ public:
                           vk::DeviceSize dstOffset = 0);
 
 private:
-    VulkanDevice* device = nullptr;
+    VulkanDevice* device = nullptr;  // Non-owning pointer, lifetime managed externally
     vk::raii::Buffer buffer = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
     vk::DeviceSize size;
@@ -207,6 +207,19 @@ private:
      * @throws VulkanException if no suitable memory type is found
      */
     uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
+
+    /**
+     * @brief Create a device-local buffer with staging
+     *
+     * @param device Vulkan device
+     * @param data Data to copy
+     * @param size Data size
+     * @param usageFlag Buffer usage flag (eVertexBuffer or eIndexBuffer)
+     * @return Buffer Device-local buffer
+     */
+    static Buffer createDeviceLocalBuffer(VulkanDevice* device, const void* data,
+                                          vk::DeviceSize size,
+                                          vk::BufferUsageFlagBits usageFlag);
 };
 
 } // namespace RYRayTracing

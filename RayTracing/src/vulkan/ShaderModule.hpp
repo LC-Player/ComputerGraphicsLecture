@@ -171,7 +171,7 @@ public:
                                            const std::string& entryPoint = "main");
 
 private:
-    VulkanDevice* device;
+    VulkanDevice* device;  // Non-owning pointer, lifetime managed 
     vk::raii::ShaderModule shaderModule = nullptr;
     ShaderStage stage;
     std::string entryPoint;

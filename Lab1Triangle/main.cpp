@@ -1,5 +1,15 @@
+#include "type.h"
+#include "Camera.h"
+#include "Transform.h"
+
+#include "imgui_impl_vulkan.h"
+#include "imgui_impl_glfw.h"
+
+#include "imgui/imgui.h"
+
 #include <vulkan/vulkan_raii.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <GLFW/glfw3.h>
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -16,7 +26,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <cassert>
-
 
 static std::vector<char> readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -133,6 +142,7 @@ public:
     void run() {
         initWindow();
         initVulkan();
+        initImGui();
         mainLoop();
         cleanup();
     }
@@ -150,6 +160,54 @@ private:
         }
         glfwSetWindowUserPointer(m_window, this);
         glfwSetFramebufferSizeCallback(m_window, framebufferResizeCallback);
+    }
+
+    void initImGui() {
+        vk::DescriptorPoolSize pool_sizes[] = {
+            { vk::DescriptorType::eCombinedImageSampler, 1000 },
+        };
+
+        vk::DescriptorPoolCreateInfo pool_info{};
+        pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+        pool_info.maxSets = 1000;
+        pool_info.poolSizeCount = 1;
+        pool_info.pPoolSizes = pool_sizes;
+
+        m_imguiPool = m_device.createDescriptorPool(pool_info);
+
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+
+        ImGui_ImplGlfw_InitForVulkan(m_window, true);
+
+        ImGui_ImplVulkan_InitInfo init_info{};
+        init_info.Instance = *m_instance;
+        init_info.PhysicalDevice = *m_physicalDevice;
+        init_info.Device = *m_device;
+        init_info.Queue = *m_graphicsQueue;
+        init_info.DescriptorPool = *m_imguiPool;
+        init_info.MinImageCount = m_swapChainImages.size();
+        init_info.ImageCount = m_swapChainImages.size();
+
+        ImGui_ImplVulkan_Init(&init_info, *m_renderPass);
+
+        auto& cmd = m_commandBuffers[0];
+        cmd.reset();
+
+        vk::CommandBufferBeginInfo beginInfo{};
+        cmd.begin(beginInfo);
+
+        ImGui_ImplVulkan_CreateFontsTexture(*cmd);
+
+        cmd.end();
+
+        vk::SubmitInfo submitInfo{};
+        submitInfo.setCommandBuffers(*cmd);
+
+        m_graphicsQueue.submit(submitInfo);
+        m_graphicsQueue.waitIdle();
+
+        ImGui_ImplVulkan_DestroyFontUploadObjects();        
     }
 
     void createInstance() {
@@ -224,14 +282,22 @@ private:
         createImageViews();
         createRenderPass();
         createFramebuffers();
+        createDescriptorSetLayout();
         createGraphicsPipeline();
         createCommandPool();
         createCommandBuffers();
         createSyncObjects();
+
+        createVertexBuffer();
+        createUniformBuffers();
     }
 
     void mainLoop() {
         while (!glfwWindowShouldClose(m_window)) {
+
+            // update logic
+            m_transform.rotation.z += 0.01;
+
             glfwPollEvents();
             drawFrame();
         }
@@ -239,6 +305,24 @@ private:
     }
     
     void drawFrame() {
+
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::Begin("Transform");
+
+        ImGui::SetWindowFontScale(3);
+
+        ImGui::DragFloat3("Translation", &m_transform.translation.x, 0.01f);
+        ImGui::DragFloat3("Rotation", &m_transform.rotation.x, 0.01f);
+        ImGui::DragFloat3("Scale", &m_transform.scale.x, 0.01f);
+
+        ImGui::End();
+
+        ImGui::Render();
+
         auto result = m_device.waitForFences(*m_inFlightFences[m_currentFrame], true, UINT64_MAX);
 
         if (result != vk::Result::eSuccess) {
@@ -257,6 +341,12 @@ private:
         if (nxtRes != vk::Result::eSuccess && nxtRes != vk::Result::eSuboptimalKHR) {
             throw std::runtime_error("Failed to acquire swap chain image!");
         }
+
+        // update vertex buffers
+        auto transformedVertices = getTransformedVertices();
+
+        memcpy(m_mappedVertexData, transformedVertices.data(),
+            sizeof(Vertex) * transformedVertices.size());
 
         // Only reset the fence if we are submitting work
         m_device.resetFences(*m_inFlightFences[m_currentFrame]);
@@ -299,6 +389,14 @@ private:
     }
 
     void cleanup() {
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+
+        if (m_mappedVertexData) {
+            m_vertexBufferMemory.unmapMemory();
+            m_mappedVertexData = nullptr;
+        }
         if (m_window) {
             glfwDestroyWindow(m_window);
             m_window = nullptr;
@@ -609,6 +707,18 @@ private:
         return shaderModule;
     }
 
+    void createDescriptorSetLayout() {
+        vk::DescriptorSetLayoutBinding uboLayoutBinding;
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+        uboLayoutBinding.descriptorCount = 1;
+        uboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+
+        vk::DescriptorSetLayoutCreateInfo layoutInfo;
+        layoutInfo.setBindings(uboLayoutBinding);
+        m_descriptorSetLayout = m_device.createDescriptorSetLayout(layoutInfo);
+    }
+
     void createGraphicsPipeline() {
         auto shaderCode = readFile("shaders/shader.spv");
         vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
@@ -632,6 +742,11 @@ private:
         dynamicState.setDynamicStates(dynamicStates);
 
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
+
+        const auto bindingDescription = Vertex::getBindingDescription();
+        const auto attributeDescriptions = Vertex::getAttributeDescriptions();
+        vertexInputInfo.setVertexBindingDescriptions(bindingDescription);
+        vertexInputInfo.setVertexAttributeDescriptions(attributeDescriptions);
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
         inputAssembly.topology = vk::PrimitiveTopology::eTriangleList;
@@ -687,6 +802,7 @@ private:
         colorBlending.setAttachments(colorBlendAttachment);
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+        pipelineLayoutInfo.setSetLayouts(*m_descriptorSetLayout);
         m_pipelineLayout = m_device.createPipelineLayout(pipelineLayoutInfo);
 
         vk::GraphicsPipelineCreateInfo pipelineInfo{};
@@ -704,6 +820,7 @@ private:
         pipelineInfo.subpass = 0;
 
         m_graphicsPipeline = m_device.createGraphicsPipeline(nullptr, pipelineInfo);
+
     };
 
     void createCommandPool() {
@@ -747,7 +864,16 @@ private:
         );
         commandBuffer.setScissor(0, scissor);
 
-        commandBuffer.draw(3, 1, 0, 0);
+        const std::array<vk::Buffer, 1> vertexBuffers{ m_vertexBuffer };
+        constexpr std::array<vk::DeviceSize, 1> offsets{ 0 };
+        commandBuffer.bindVertexBuffers(0, vertexBuffers, offsets);
+
+        commandBuffer.draw(static_cast<uint32_t>(m_vertices.size()), 1, 0, 0);
+
+        ImGui_ImplVulkan_RenderDrawData(
+            ImGui::GetDrawData(),
+            *commandBuffer
+        );
 
         commandBuffer.endRenderPass();
         commandBuffer.end();
@@ -798,6 +924,76 @@ private:
         m_framebufferResized = false;
     }
 
+    uint32_t findMemoryType(const uint32_t typeFilter, const vk::MemoryPropertyFlags properties) const {
+        const auto memProperties = m_physicalDevice.getMemoryProperties();
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+            if ((typeFilter & (1 << i)) &&
+                (memProperties.memoryTypes[i].propertyFlags & properties) == properties
+                ) return i;
+        }
+        throw std::runtime_error("failed to find suitable memory type!");
+        return 0; // optional
+    }
+
+    void createVertexBuffer() {
+        vk::BufferCreateInfo bufferInfo;
+        bufferInfo.size = sizeof(Vertex) * m_vertices.size();
+        bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer;
+        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
+
+        m_vertexBuffer = m_device.createBuffer(bufferInfo);
+
+        const vk::MemoryRequirements memRequirements = m_vertexBuffer.getMemoryRequirements();
+
+        vk::MemoryAllocateInfo allocInfo;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(
+            memRequirements.memoryTypeBits,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent
+        );
+        m_vertexBufferMemory = m_device.allocateMemory(allocInfo);
+        m_vertexBuffer.bindMemory(m_vertexBufferMemory, 0);
+
+        m_mappedVertexData = m_vertexBufferMemory.mapMemory(0, bufferInfo.size);
+    }
+
+    void createUniformBuffers() {
+#if 0
+        constexpr vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+
+        m_uniformBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+        m_uniformBuffersMemory.reserve(MAX_FRAMES_IN_FLIGHT);
+        m_uniformBuffersMapped.reserve(MAX_FRAMES_IN_FLIGHT);
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            m_uniformBuffers.emplace_back(nullptr);
+            m_uniformBuffersMemory.emplace_back(nullptr);
+            m_uniformBuffersMapped.emplace_back(nullptr);
+            createBuffer(bufferSize,
+                vk::BufferUsageFlagBits::eUniformBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible |
+                vk::MemoryPropertyFlagBits::eHostCoherent,
+                m_uniformBuffers[i],
+                m_uniformBuffersMemory[i]
+            );
+
+            m_uniformBuffersMapped[i] = m_uniformBuffersMemory[i].mapMemory(0, bufferSize);
+        }
+#endif
+    }
+
+    const std::vector<Vertex> getTransformedVertices() {
+        std::vector<Vertex> vert = {};
+        for (const auto& in : m_vertices) {
+            vert.emplace_back(Vertex{ 
+                m_transform() * glm::vec4{ in.pos, 1.0f }, 
+                in.color 
+            });
+        }
+        return vert;
+    }
+
 private:
     constexpr static int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -808,10 +1004,14 @@ private:
     vk::raii::Queue m_graphicsQueue = nullptr;
     vk::raii::SurfaceKHR m_surface = nullptr;
     vk::raii::RenderPass m_renderPass = nullptr;
+    vk::raii::DescriptorSetLayout m_descriptorSetLayout = nullptr;
     vk::raii::PipelineLayout m_pipelineLayout = nullptr;
     vk::raii::Pipeline m_graphicsPipeline = nullptr;
     vk::raii::CommandPool m_commandPool = nullptr;
     vk::raii::SwapchainKHR m_swapChain = nullptr;
+    vk::raii::DeviceMemory m_vertexBufferMemory = nullptr;
+    vk::raii::Buffer m_vertexBuffer = nullptr;
+    vk::raii::DescriptorPool m_imguiPool = nullptr;
     std::vector<vk::raii::ImageView> m_swapChainImageViews;
     std::vector<vk::raii::Framebuffer> m_swapChainFramebuffers;
     std::vector<vk::raii::CommandBuffer> m_commandBuffers;
@@ -819,15 +1019,33 @@ private:
     std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
     std::vector<vk::raii::Fence> m_inFlightFences;
 
+    vk::raii::DeviceMemory m_indexBufferMemory{ nullptr };
+    vk::raii::Buffer m_indexBuffer{ nullptr };
+    std::vector<vk::raii::DeviceMemory> m_uniformBuffersMemory;
+    std::vector<vk::raii::Buffer> m_uniformBuffers;
+    std::vector<void*> m_uniformBuffersMapped;
+
+    void* m_mappedVertexData = nullptr;
+
     vk::Extent2D m_swapChainExtent;
     vk::SurfaceFormatKHR m_swapChainSurfaceFormat;
     std::vector<vk::Image> m_swapChainImages = {};
+
+    const std::vector<Vertex> m_vertices = {
+            {{0.0f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+            {{0.5f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+            {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}}
+
+    };
+
+    Transform m_transform;
+    SceneCamera m_Camera;
 
     int m_currentFrame = 0;
     bool m_framebufferResized = false;
 
     GLFWwindow* m_window = nullptr;
-    glm::vec2 m_windowSize = { 800,600 };
+    glm::vec2 m_windowSize = { 1440 , 1080 };
     const std::vector<const char*> m_validationLayers = {
         "VK_LAYER_KHRONOS_validation"
     };

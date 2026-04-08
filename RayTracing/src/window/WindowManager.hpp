@@ -5,6 +5,7 @@
 #include <vulkan/vulkan_raii.hpp>
 #include <string>
 #include <functional>
+#include <optional>
 #include "core/Logger.hpp"
 
 namespace RYRayTracing {
@@ -116,11 +117,24 @@ public:
      * @brief Create a Vulkan surface for the window
      *
      * @param instance Vulkan instance
-     * @param allocator Allocation callbacks (optional)
-     * @return vk::raii::SurfaceKHR Created surface
      * @throws VulkanException if surface creation fails
      */
-    vk::raii::SurfaceKHR createSurface(vk::raii::Instance& instance) const;
+    void createSurface(vk::raii::Instance& instance);
+
+    /**
+     * @brief Get the Vulkan surface
+     *
+     * @return vk::raii::SurfaceKHR& Vulkan surface
+     */
+    vk::raii::SurfaceKHR& getSurface() { return surface; }
+    const vk::raii::SurfaceKHR& getSurface() const { return surface; }
+
+    /**
+     * @brief Check if surface has been created
+     *
+     * @return true if surface exists, false otherwise
+     */
+    bool hasSurface() const { return surface != nullptr; }
 
     /**
      * @brief Check if window was resized
@@ -172,6 +186,9 @@ private:
     std::string title;
     bool initialized;
     mutable bool framebufferResized;
+
+    // Vulkan surface (created when needed, destroyed with window)
+    vk::raii::SurfaceKHR surface = nullptr;
 
     // Callbacks
     WindowCallbacks callbacks;

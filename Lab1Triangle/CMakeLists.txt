@@ -1,6 +1,13 @@
 add_executable(Lab1Triangle)
 
-target_sources(Lab1Triangle PRIVATE main.cpp)
+target_sources(Lab1Triangle PRIVATE
+    main.cpp
+    Camera.cpp
+    imgui_impl_glfw.cpp
+    imgui_impl_vulkan.cpp
+)
+
+add_subdirectory(imgui)
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -10,6 +17,7 @@ find_package(glm CONFIG REQUIRED)
 target_link_libraries(Lab1Triangle PRIVATE
         glfw
         glm::glm
+        ImGui
         ${Vulkan_LIBRARIES}
 )
 

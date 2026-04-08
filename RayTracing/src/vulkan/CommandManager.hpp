@@ -124,7 +124,7 @@ public:
     void resetCommandPool(vk::CommandPoolResetFlags flags = {});
 
 private:
-    vk::raii::Device* device = nullptr;
+    vk::raii::Device& device;
     vk::raii::CommandPool commandPool = nullptr;
     CommandPoolConfig config;
 

@@ -4,7 +4,7 @@
 namespace RYRayTracing {
 
 PipelineManager::PipelineManager(vk::raii::Device& device)
-    : device(&device) {
+    : device(device) {
     LOG_INFO("PipelineManager initialized successfully");
 }
 
@@ -102,7 +102,7 @@ vk::raii::Pipeline& PipelineManager::createPipeline(const std::string& name, con
 
     // Create pipeline
     try {
-        auto pipelineResult = device->createGraphicsPipelines(nullptr, pipelineInfo);
+        auto pipelineResult = device.createGraphicsPipelines(nullptr, pipelineInfo);
         auto [it, success] = pipelines.emplace(name, std::move(pipelineResult[0]));
         return it->second;
     } catch (const vk::SystemError& e) {

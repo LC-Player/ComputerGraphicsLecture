@@ -5,11 +5,11 @@
 
 namespace RYRayTracing {
 
-SwapChainManager::SwapChainManager(VulkanDevice* device, vk::raii::SurfaceKHR& surface,
+SwapChainManager::SwapChainManager(VulkanDevice& device, vk::raii::SurfaceKHR& surface,
                                    uint32_t width, uint32_t height,
                                    const SwapChainConfig& config)
     : device(device)
-    , surface(&surface)
+    , surface(surface)
     , imageFormat(vk::Format::eUndefined)
     , extent{width, height}
     , config(config) {
@@ -28,12 +28,12 @@ SwapChainManager::SwapChainManager(VulkanDevice* device, vk::raii::SurfaceKHR& s
 }
 
 void SwapChainManager::createSwapChain() {
-    auto physicalDevice = device->getPhysical();
+    auto physicalDevice = device.getPhysical();
 
     // Get surface capabilities
-    auto capabilities = physicalDevice.getSurfaceCapabilitiesKHR(**surface);
-    auto formats = physicalDevice.getSurfaceFormatsKHR(**surface);
-    auto presentModes = physicalDevice.getSurfacePresentModesKHR(**surface);
+    auto capabilities = physicalDevice.getSurfaceCapabilitiesKHR(*surface);
+    auto formats = physicalDevice.getSurfaceFormatsKHR(*surface);
+    auto presentModes = physicalDevice.getSurfacePresentModesKHR(*surface);
 
     SwapChainSupportDetails swapChainSupport;
     swapChainSupport.capabilities = capabilities;
@@ -52,7 +52,7 @@ void SwapChainManager::createSwapChain() {
     uint32_t imageCount = chooseImageCount(swapChainSupport.capabilities);
 
     vk::SwapchainCreateInfoKHR createInfo;
-    createInfo.setSurface(**surface);
+    createInfo.setSurface(*surface);
     createInfo.setMinImageCount(imageCount);
     createInfo.setImageFormat(surfaceFormat.format);
     createInfo.setImageColorSpace(surfaceFormat.colorSpace);
@@ -67,7 +67,7 @@ void SwapChainManager::createSwapChain() {
     createInfo.setOldSwapchain(nullptr);
 
     // Handle queue family indices
-    QueueFamilyIndices indices = device->getQueueFamilyIndices();
+    QueueFamilyIndices indices = device.getQueueFamilyIndices();
     std::vector<uint32_t> queueFamilyIndicesVec;
 
     if (indices.graphicsFamily != indices.presentFamily) {
@@ -80,7 +80,7 @@ void SwapChainManager::createSwapChain() {
     }
 
     try {
-        swapChain = device->get().createSwapchainKHR(createInfo);
+        swapChain = device.get().createSwapchainKHR(createInfo);
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(),
                             std::string("Failed to create swap chain: ") + e.what(),
@@ -123,7 +123,7 @@ void SwapChainManager::createImageViews() {
         });
 
         try {
-            imageViews.emplace_back(device->get().createImageView(createInfo));
+            imageViews.emplace_back(device.get().createImageView(createInfo));
         } catch (const vk::SystemError& e) {
             throw VulkanException(e.code(),
                                 std::string("Failed to create image view: ") + e.what(),
@@ -213,7 +213,7 @@ void SwapChainManager::presentImage(uint32_t imageIndex, vk::Semaphore waitSemap
     presentInfo.setImageIndices(imageIndex);
 
     try {
-        vk::Result result = device->getPresentQueue().presentKHR(presentInfo);
+        vk::Result result = device.getPresentQueue().presentKHR(presentInfo);
         if (result == vk::Result::eSuboptimalKHR) {
             // Swap chain is suboptimal, but presentation will still succeed
             LOG_DEBUG("Swap chain is suboptimal");
@@ -232,7 +232,7 @@ void SwapChainManager::recreate(uint32_t width, uint32_t height) {
     LOG_INFO("Recreating swap chain: " + std::to_string(width) + "x" + std::to_string(height));
 
     // Wait for device to be idle
-    device->waitIdle();
+    device.waitIdle();
 
     // Clear old resources
     imageViews.clear();
@@ -249,12 +249,12 @@ void SwapChainManager::recreate(uint32_t width, uint32_t height) {
 }
 
 SwapChainSupportDetails SwapChainManager::querySupport() const {
-    auto physicalDevice = device->getPhysical();
+    auto physicalDevice = device.getPhysical();
 
     SwapChainSupportDetails details;
-    details.capabilities = physicalDevice.getSurfaceCapabilitiesKHR(**surface);
-    details.formats = physicalDevice.getSurfaceFormatsKHR(**surface);
-    details.presentModes = physicalDevice.getSurfacePresentModesKHR(**surface);
+    details.capabilities = physicalDevice.getSurfaceCapabilitiesKHR(*surface);
+    details.formats = physicalDevice.getSurfaceFormatsKHR(*surface);
+    details.presentModes = physicalDevice.getSurfacePresentModesKHR(*surface);
 
     return details;
 }

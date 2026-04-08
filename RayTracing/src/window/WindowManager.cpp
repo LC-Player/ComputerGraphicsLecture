@@ -18,6 +18,9 @@ WindowManager::WindowManager(const WindowConfig& config)
 }
 
 WindowManager::~WindowManager() {
+    // Surface is automatically destroyed by RAII when optional is cleared
+    surface = nullptr;
+
     if (window) {
         LOG_DEBUG("Destroying window: " + title);
         glfwDestroyWindow(window);
@@ -32,6 +35,7 @@ WindowManager::WindowManager(WindowManager&& other) noexcept
     , title(std::move(other.title))
     , initialized(other.initialized)
     , framebufferResized(other.framebufferResized)
+    , surface(std::move(other.surface))
     , callbacks(std::move(other.callbacks)) {
     other.window = nullptr;
     other.initialized = false;
@@ -39,6 +43,8 @@ WindowManager::WindowManager(WindowManager&& other) noexcept
 
 WindowManager& WindowManager::operator=(WindowManager&& other) noexcept {
     if (this != &other) {
+        // Clean up existing resources
+        surface = nullptr;
         if (window) {
             glfwDestroyWindow(window);
         }
@@ -49,6 +55,7 @@ WindowManager& WindowManager::operator=(WindowManager&& other) noexcept {
         title = std::move(other.title);
         initialized = other.initialized;
         framebufferResized = other.framebufferResized;
+        surface = std::move(other.surface);
         callbacks = std::move(other.callbacks);
 
         other.window = nullptr;
@@ -115,15 +122,15 @@ std::pair<int, int> WindowManager::getFramebufferSize() const {
     return {fbWidth, fbHeight};
 }
 
-vk::raii::SurfaceKHR WindowManager::createSurface(vk::raii::Instance& instance) const {
+void WindowManager::createSurface(vk::raii::Instance& instance) {
     if (!window) {
         throw VulkanException(vk::Result::eErrorInitializationFailed,
                             "Cannot create surface: window not created",
                             __FUNCTION__, __FILE__, __LINE__);
     }
 
-    VkSurfaceKHR surface;
-    VkResult result = glfwCreateWindowSurface(*instance, window, nullptr, &surface);
+    VkSurfaceKHR rawSurface;
+    VkResult result = glfwCreateWindowSurface(*instance, window, nullptr, &rawSurface);
 
     if (result != VK_SUCCESS) {
         throw VulkanException(static_cast<vk::Result>(result),
@@ -131,8 +138,9 @@ vk::raii::SurfaceKHR WindowManager::createSurface(vk::raii::Instance& instance) 
                             __FUNCTION__, __FILE__, __LINE__);
     }
 
+    // Create RAII surface and store in optional
+    surface = vk::raii::SurfaceKHR(instance, rawSurface);
     LOG_INFO("Vulkan surface created successfully");
-    return vk::raii::SurfaceKHR(instance, surface);
 }
 
 void WindowManager::setCallbacks(const WindowCallbacks& callbacks) {

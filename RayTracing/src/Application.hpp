@@ -51,9 +51,8 @@ public:
 
 private:
     // Vulkan objects
-    std::unique_ptr<WindowManager> windowManager;
     std::unique_ptr<VulkanInstance> vulkanInstance;
-    vk::raii::SurfaceKHR surface = nullptr;
+    std::unique_ptr<WindowManager> windowManager;
     std::unique_ptr<VulkanDevice> vulkanDevice;
     std::unique_ptr<SwapChainManager> swapChainManager;
     std::unique_ptr<RenderPassManager> renderPassManager;
@@ -62,6 +61,9 @@ private:
 
     // Vertex buffer for triangle
     std::unique_ptr<Buffer> vertexBuffer;
+
+    // Index buffer for triangle
+    std::unique_ptr<Buffer> indexBuffer;
 
     // Shaders
     std::unique_ptr<ShaderModule> vertexShader;
@@ -161,6 +163,11 @@ private:
     void createVertexBuffer();
 
     /**
+     * @brief Create index buffer
+     */
+    void createIndexBuffer();
+
+    /**
      * @brief Create command buffers
      */
     void createCommandBuffers();
@@ -179,11 +186,6 @@ private:
      * @brief Main render loop
      */
     void mainLoop();
-
-    /**
-     * @brief Callback for window resize events
-     */
-    static void onWindowResize(int width, int height, void* userData);
 };
 
 } // namespace RYRayTracing

@@ -30,11 +30,6 @@ target_sources(RayTracing PRIVATE
         src/vulkan/CommandManager.cpp
 )
 
-# Renderer module sources
-target_sources(RayTracing PRIVATE
-        src/renderer/VulkanRenderer.cpp
-)
-
 # Main application sources
 target_sources(RayTracing PRIVATE
         src/main.cpp
@@ -51,7 +46,6 @@ target_include_directories(RayTracing PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
         ${CMAKE_CURRENT_SOURCE_DIR}/src/window
         ${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer
         ${Vulkan_INCLUDE_DIRS}
 )
 

@@ -88,7 +88,7 @@ public:
     void end(vk::raii::CommandBuffer& commandBuffer);
 
 private:
-    vk::raii::Device* device;
+    vk::raii::Device& device;
     vk::raii::RenderPass renderPass = nullptr;
     RenderPassConfig config;
 

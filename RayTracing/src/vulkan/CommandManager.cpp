@@ -3,7 +3,7 @@
 namespace RYRayTracing {
 
 CommandManager::CommandManager(vk::raii::Device& device, const CommandPoolConfig& config)
-    : device(&device), config(config) {
+    : device(device), config(config) {
     createCommandPool();
     LOG_INFO("CommandManager initialized successfully");
 }
@@ -15,7 +15,7 @@ void CommandManager::createCommandPool() {
     };
 
     try {
-        commandPool = device->createCommandPool(poolInfo);
+        commandPool = device.createCommandPool(poolInfo);
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(), std::string("Failed to create command pool: ") + e.what(),
                             __FUNCTION__, __FILE__, __LINE__);
@@ -32,7 +32,7 @@ vk::raii::CommandBuffer CommandManager::allocateCommandBuffer(vk::CommandBufferL
     };
 
     try {
-        auto buffers = device->allocateCommandBuffers(allocInfo);
+        auto buffers = device.allocateCommandBuffers(allocInfo);
         return std::move(buffers[0]);
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(),
@@ -51,7 +51,7 @@ std::vector<vk::raii::CommandBuffer> CommandManager::allocateCommandBuffers(
     };
 
     try {
-        auto buffers = device->allocateCommandBuffers(allocInfo);
+        auto buffers = device.allocateCommandBuffers(allocInfo);
         // Convert to vector of raii::CommandBuffer
         std::vector<vk::raii::CommandBuffer> result;
         for (auto& buf : buffers) {
@@ -116,6 +116,10 @@ void CommandManager::endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffe
                             __FUNCTION__, __FILE__, __LINE__);
     }
 
+    // Create fence for synchronization
+    vk::FenceCreateInfo fenceInfo;
+    vk::raii::Fence fence{device.createFence(fenceInfo)};
+
     vk::SubmitInfo submitInfo{
         {},
         {},
@@ -123,8 +127,9 @@ void CommandManager::endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffe
     };
 
     try {
-        queue.submit(submitInfo, nullptr);
-        queue.waitIdle();
+        queue.submit(submitInfo, *fence);
+        // Wait for fence instead of queue
+        (void)device.waitForFences(*fence, true, UINT64_MAX);
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(),
                             std::string("Failed to submit command buffer: ") + e.what(),

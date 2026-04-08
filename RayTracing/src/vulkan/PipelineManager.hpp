@@ -128,7 +128,7 @@ public:
     void destroyAllPipelines();
 
 private:
-    vk::raii::Device* device;
+    vk::raii::Device& device;
     std::unordered_map<std::string, vk::raii::Pipeline> pipelines;
 
     /**

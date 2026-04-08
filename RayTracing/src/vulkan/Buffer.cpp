@@ -149,7 +149,9 @@ void Buffer::copyTo(void* data, vk::DeviceSize size, vk::DeviceSize offset) cons
     LOG_DEBUG("Copied " + std::to_string(size) + " bytes from buffer at offset " + std::to_string(offset));
 }
 
-Buffer Buffer::createVertexBuffer(VulkanDevice* device, const void* data, vk::DeviceSize size) {
+Buffer Buffer::createDeviceLocalBuffer(VulkanDevice* device, const void* data,
+                                       vk::DeviceSize size,
+                                       vk::BufferUsageFlagBits usageFlag) {
     // Create staging buffer with host-visible memory
     BufferConfig stagingConfig;
     stagingConfig.size = size;
@@ -159,15 +161,15 @@ Buffer Buffer::createVertexBuffer(VulkanDevice* device, const void* data, vk::De
     Buffer stagingBuffer(device, stagingConfig);
     stagingBuffer.copyFrom(data, size);
 
-    // Create device-local vertex buffer
+    // Create device-local buffer
     BufferConfig config;
     config.size = size;
-    config.usage = vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst;
+    config.usage = usageFlag | vk::BufferUsageFlagBits::eTransferDst;
     config.properties = vk::MemoryPropertyFlagBits::eDeviceLocal;
 
-    Buffer vertexBuffer(device, config);
+    Buffer deviceBuffer(device, config);
 
-    // Copy from staging buffer to vertex buffer
+    // Copy from staging buffer to device buffer
     // Create a temporary command pool and command buffer for the copy operation
     vk::CommandPoolCreateInfo poolInfo;
     poolInfo.setFlags(vk::CommandPoolCreateFlagBits::eTransient);
@@ -193,44 +195,33 @@ Buffer Buffer::createVertexBuffer(VulkanDevice* device, const void* data, vk::De
     copyRegion.setSrcOffset(0);
     copyRegion.setDstOffset(0);
     copyRegion.setSize(size);
-    commandBuffer.copyBuffer(*stagingBuffer.get(), *vertexBuffer.get(), copyRegion);
+    commandBuffer.copyBuffer(*stagingBuffer.get(), *deviceBuffer.get(), copyRegion);
 
     // End command buffer
     commandBuffer.end();
 
-    // Submit command buffer
+    // Submit command buffer with fence for synchronization
+    vk::FenceCreateInfo fenceInfo;
+    vk::raii::Fence fence{device->get(), fenceInfo};
+
     vk::SubmitInfo submitInfo;
     submitInfo.setCommandBuffers(*commandBuffer);
-    device->getGraphicsQueue().submit(submitInfo);
+    device->getGraphicsQueue().submit(submitInfo, *fence);
 
     // Wait for the copy to complete
-    device->getGraphicsQueue().waitIdle();
+    (void)device->get().waitForFences(*fence, true, UINT64_MAX);
 
+    return deviceBuffer;
+}
+
+Buffer Buffer::createVertexBuffer(VulkanDevice* device, const void* data, vk::DeviceSize size) {
     LOG_INFO("Vertex buffer created: size=" + std::to_string(size));
-    return vertexBuffer;
+    return createDeviceLocalBuffer(device, data, size, vk::BufferUsageFlagBits::eVertexBuffer);
 }
 
 Buffer Buffer::createIndexBuffer(VulkanDevice* device, const void* data, vk::DeviceSize size) {
-    BufferConfig config;
-    config.size = size;
-    config.usage = vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst;
-    config.properties = vk::MemoryPropertyFlagBits::eDeviceLocal;
-
-    Buffer buffer(device, config);
-
-    // Create staging buffer for upload
-    BufferConfig stagingConfig;
-    stagingConfig.size = size;
-    stagingConfig.usage = vk::BufferUsageFlagBits::eTransferSrc;
-    stagingConfig.properties = vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent;
-
-    Buffer stagingBuffer(device, stagingConfig);
-    stagingBuffer.copyFrom(data, size);
-
-    // TODO: Copy from staging buffer to index buffer using command buffer
-
     LOG_INFO("Index buffer created: size=" + std::to_string(size));
-    return buffer;
+    return createDeviceLocalBuffer(device, data, size, vk::BufferUsageFlagBits::eIndexBuffer);
 }
 
 Buffer Buffer::createUniformBuffer(VulkanDevice* device, vk::DeviceSize size) {

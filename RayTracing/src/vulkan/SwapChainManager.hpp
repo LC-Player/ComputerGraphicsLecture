@@ -58,7 +58,7 @@ public:
      * @param height Swap chain height
      * @param config Swap chain configuration
      */
-    SwapChainManager(VulkanDevice* device, vk::raii::SurfaceKHR& surface,
+    SwapChainManager(VulkanDevice& device, vk::raii::SurfaceKHR& surface,
                      uint32_t width, uint32_t height,
                      const SwapChainConfig& config = SwapChainConfig());
 
@@ -170,8 +170,8 @@ public:
     SwapChainSupportDetails querySupport() const;
 
 private:
-    VulkanDevice* device = nullptr;
-    vk::raii::SurfaceKHR* surface = nullptr;
+    VulkanDevice& device;
+    vk::raii::SurfaceKHR& surface;
     vk::raii::SwapchainKHR swapChain = nullptr;
     std::vector<vk::Image> images;
     std::vector<vk::raii::ImageView> imageViews;
