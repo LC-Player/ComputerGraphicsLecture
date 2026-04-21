@@ -1,6 +1,6 @@
-add_executable(Lab1Triangle)
+add_executable(VkFromScratch)
 
-target_sources(Lab1Triangle PRIVATE
+target_sources(VkFromScratch PRIVATE
     main.cpp
     Camera.cpp
     imgui_impl_glfw.cpp
@@ -14,27 +14,27 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 
 # Link dependencies
-target_link_libraries(Lab1Triangle PRIVATE
+target_link_libraries(VkFromScratch PRIVATE
         glfw
         glm::glm
         ImGui
         ${Vulkan_LIBRARIES}
 )
 
-target_include_directories(Lab1Triangle PRIVATE ${Vulkan_INCLUDE_DIRS})
+target_include_directories(VkFromScratch PRIVATE ${Vulkan_INCLUDE_DIRS})
 
 # Validation layers configuration
 option(ENABLE_VALIDATION_LAYERS "Enable Vulkan validation layers for debugging" ON)
 
 if(ENABLE_VALIDATION_LAYERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     message(STATUS "Vulkan validation layers enabled for Debug build")
-    target_compile_definitions(Lab1Triangle PRIVATE
+    target_compile_definitions(VkFromScratch PRIVATE
         VULKAN_DEBUG=1
         ENABLE_VALIDATION_LAYERS=1
     )
 else()
     message(STATUS "Vulkan validation layers disabled")
-    target_compile_definitions(Lab1Triangle PRIVATE
+    target_compile_definitions(VkFromScratch PRIVATE
         VULKAN_DEBUG=0
         ENABLE_VALIDATION_LAYERS=0
     )
@@ -60,10 +60,10 @@ set(SHADERS_COMPILE_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 
 # 自定义目标：将编译好的 shader 拷贝到可执行文件目录
 add_custom_target(CopyShadersToFinal ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:Lab1Triangle>/shaders
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:VkFromScratch>/shaders
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${SHADERS_COMPILE_DIR}
-        $<TARGET_FILE_DIR:Lab1Triangle>/shaders
+        $<TARGET_FILE_DIR:VkFromScratch>/shaders
     COMMENT "Copying compiled shaders to final directory"
     DEPENDS ShaderAssetsCompiling   # 等待编译完成
 )
@@ -103,13 +103,13 @@ add_slang_shader_target(ShaderAssetsCompiling SOURCES ${SHADER_SLANG_SOURCES})
 
 # 确保可执行文件依赖于最终的拷贝动作，而不是直接依赖编译目标
 add_dependencies(CopyShadersToFinal ShaderAssetsCompiling)
-add_dependencies(Lab1Triangle CopyShadersToFinal)
+add_dependencies(VkFromScratch CopyShadersToFinal)
 
 # 原有的 assets 拷贝保持不变
-add_custom_target(Lab1TriangleAssets ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:Lab1Triangle>/assets
+add_custom_target(VkFromScratchAssets ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:VkFromScratch>/assets
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:Lab1Triangle>/assets
+        $<TARGET_FILE_DIR:VkFromScratch>/assets
 )
-add_dependencies(Lab1Triangle Lab1TriangleAssets)
+add_dependencies(VkFromScratch VkFromScratchAssets)

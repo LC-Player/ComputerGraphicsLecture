@@ -9,7 +9,7 @@ struct Transform {
     glm::vec3 rotation = { 0, 0, 0 };
     glm::vec3 scale = { 1, 1, 1 };
 
-    glm::mat4 transform() {
+    glm::mat4 transform() const {
         glm::mat4 rotMat =
             glm::rotate(glm::mat4(1.0f), rotation.z, { 0, 0, 1 }) *
             glm::rotate(glm::mat4(1.0f), rotation.y, { 0, 1, 0 }) *
@@ -19,7 +19,7 @@ struct Transform {
             glm::scale(glm::mat4(1.0f), scale);
     }
 
-    glm::mat4 operator()() {
+    glm::mat4 operator()() const {
         return transform();
     }
 };

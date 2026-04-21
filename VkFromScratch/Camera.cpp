@@ -35,15 +35,17 @@ void SceneCamera::RecalculateProjection() {
 		float right = m_OrthographicHeight * m_AspectRatio * 0.5;
 		float bottom = -m_OrthographicHeight * 0.5;
 		float top = m_OrthographicHeight * 0.5;
-		m_Projection = glm::ortho(left, right, bottom, top, m_OrthographicNear, m_OrthographicFar);
+		m_Projection = glm::orthoZO(left, right, bottom, top, m_OrthographicNear, m_OrthographicFar);
 		break;
 	}
 
 	case ProjectionType::Perspective: {
-		m_Projection = glm::perspective(m_PerspectiveVerticalFOV, m_AspectRatio, m_PerspectiveNear, m_PerspectiveFar);
+		m_Projection = glm::perspectiveZO(m_PerspectiveVerticalFOV, m_AspectRatio, m_PerspectiveNear, m_PerspectiveFar);
 	}
 
 	}
+	m_Projection[1][1] *= -1.0f; // flip y
+
 }
 
 glm::vec3 SceneCamera::ScreenToWorldSpace(const glm::mat4& viewMatrix, glm::vec2 ndc, float linearDepth) {

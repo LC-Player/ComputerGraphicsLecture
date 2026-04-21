@@ -35,4 +35,4 @@ message("slangc executable at ${SLANGC_EXECUTABLE}")
 
 # Add subdirectories for different executables
 add_subdirectory(RayTracing)
-add_subdirectory(Lab1Triangle)
+add_subdirectory(VkFromScratch)

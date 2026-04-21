@@ -144,6 +144,7 @@ public:
         initWindow();
         initVulkan();
         initImGui();
+        initComponents();
         mainLoop();
         cleanup();
     }
@@ -209,6 +210,14 @@ private:
         m_graphicsQueue.waitIdle();
 
         ImGui_ImplVulkan_DestroyFontUploadObjects();        
+    }
+
+    void initComponents() {
+        m_camera.SetAspectRatio(m_windowSize.x / m_windowSize.y);
+        m_camera.SetPerspective(glm::radians(45.0f), 1, 100);
+        m_cameraTransform.translation.z = 5;
+        m_transform1.translation.x = -1;
+        m_transform2.translation.x = 1;
     }
 
     void createInstance() {
@@ -290,23 +299,45 @@ private:
         createSyncObjects();
 
         createVertexBuffer();
+        createIndexBuffer();
+        createInstanceBuffers();
         createUniformBuffers();
+        createDescriptorPool();
+        createDescriptorSets();
     }
 
     void mainLoop() {
         while (!glfwWindowShouldClose(m_window)) {
 
             // update logic
-            m_transform.rotation.z += 0.01;
-
+            m_transform1.rotation.z += 0.01;
+            update();
             glfwPollEvents();
+            
             drawFrame();
         }
         m_device.waitIdle();
     }
-    
-    void drawFrame() {
 
+    void update() {
+        if (glfwGetKey(m_window, GLFW_KEY_W) == GLFW_PRESS) {
+        }
+    }
+
+    void updateUniformBuffer(const int currentFrame) {
+        CameraData data({m_camera.GetViewProj() * glm::inverse(m_cameraTransform())});
+        memcpy(m_uniformBuffersMapped[currentFrame], &data, sizeof(data));
+    }
+
+    void updateInstanceBuffer(const int currentFrame) {
+        std::array<QuadInstanceData, 2> instances;
+        instances[0].transform = m_transform1();
+        instances[1].transform = m_transform2();
+        memcpy(m_mappedInstanceData[currentFrame], instances.data(),
+            sizeof(QuadInstanceData) * instances.size());
+    }
+
+    void drawFrame() {
 
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -316,14 +347,23 @@ private:
 
         ImGui::SetWindowFontScale(2);
 
-        ImGui::DragFloat3("Translation", glm::value_ptr(m_transform.translation), 0.01f);
-        ImGui::DragFloat3("Rotation", glm::value_ptr(m_transform.rotation), 0.01f);
-        ImGui::DragFloat3("Scale", glm::value_ptr(m_transform.scale), 0.01f);
-
-        ImGui::ColorEdit3("Color1", glm::value_ptr(m_vertices[0].color));
-        ImGui::ColorEdit3("Color2", glm::value_ptr(m_vertices[1].color));
-        ImGui::ColorEdit3("Color3", glm::value_ptr(m_vertices[2].color));
-
+        ImGui::DragFloat3("Translation1", glm::value_ptr(m_transform1.translation), 0.01f);
+        ImGui::DragFloat3("Rotation1", glm::value_ptr(m_transform1.rotation), 0.01f);
+        ImGui::DragFloat3("Scale1", glm::value_ptr(m_transform1.scale), 0.01f);
+        ImGui::Separator();
+        ImGui::DragFloat3("Translation2", glm::value_ptr(m_transform2.translation), 0.01f);
+        ImGui::DragFloat3("Rotation2", glm::value_ptr(m_transform2.rotation), 0.01f);
+        ImGui::DragFloat3("Scale2", glm::value_ptr(m_transform2.scale), 0.01f);
+        ImGui::Separator();
+        ImGui::Text("Camera");
+        ImGui::Separator();
+        ImGui::DragFloat3("Translation", glm::value_ptr(m_cameraTransform.translation), 0.01f);
+        ImGui::DragFloat3("Rotation", glm::value_ptr(m_cameraTransform.rotation), 0.01f);
+        float fov = glm::degrees(m_camera.GetPerspectiveVerticalFOV());
+        if (ImGui::DragFloat("FOV", &fov, 0.01f)) {
+            m_camera.SetPerspectiveVerticalFOV(glm::radians(fov));
+        }
+        
         ImGui::End();
 
         ImGui::Render();
@@ -347,17 +387,13 @@ private:
             throw std::runtime_error("Failed to acquire swap chain image!");
         }
 
-        // update vertex buffers
-        auto transformedVertices = getTransformedVertices();
-
-        memcpy(m_mappedVertexData, transformedVertices.data(),
-            sizeof(Vertex) * transformedVertices.size());
-
         // Only reset the fence if we are submitting work
         m_device.resetFences(*m_inFlightFences[m_currentFrame]);
 
+        updateInstanceBuffer(m_currentFrame);
+        updateUniformBuffer(m_currentFrame);
         m_commandBuffers[m_currentFrame].reset();
-        recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex);
+        recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, m_instanceBuffers[m_currentFrame]);
 
         vk::SubmitInfo submitInfo;
 
@@ -401,6 +437,12 @@ private:
         if (m_mappedVertexData) {
             m_vertexBufferMemory.unmapMemory();
             m_mappedVertexData = nullptr;
+        }
+        for (auto& it : m_instanceBufferMemory) {
+            it.unmapMemory();
+        }
+        for (const auto& it : m_uniformBuffersMemory) {
+            it.unmapMemory();
         }
         if (m_window) {
             glfwDestroyWindow(m_window);
@@ -635,8 +677,6 @@ private:
 
         m_swapChain = m_device.createSwapchainKHR(swapChainCreateInfo);
         m_swapChainImages = m_swapChain.getImages();
-
-        std::cout << "Swapchain image count: " << m_swapChainImages.size() << std::endl;
     }
 
     void createImageViews() {
@@ -748,8 +788,8 @@ private:
 
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
 
-        const auto bindingDescription = Vertex::getBindingDescription();
-        const auto attributeDescriptions = Vertex::getAttributeDescriptions();
+        std::array<vk::VertexInputBindingDescription, 2> bindingDescription = { getVertexBindingDescription(), getInstanceBindingDescription() };
+        const auto attributeDescriptions = getVertexAttributeDescriptions();
         vertexInputInfo.setVertexBindingDescriptions(bindingDescription);
         vertexInputInfo.setVertexAttributeDescriptions(attributeDescriptions);
 
@@ -780,7 +820,7 @@ private:
         rasterizer.rasterizerDiscardEnable = false;
         rasterizer.polygonMode = vk::PolygonMode::eFill;
         rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = vk::CullModeFlagBits::eBack;
+        rasterizer.cullMode = vk::CullModeFlagBits::eNone;
         rasterizer.frontFace = vk::FrontFace::eClockwise;
         rasterizer.depthBiasEnable = false;
 
@@ -838,7 +878,7 @@ private:
         m_commandPool = m_device.createCommandPool(poolInfo);
     }
 
-    void recordCommandBuffer(const vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex) const {
+    void recordCommandBuffer(const vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex, const vk::Buffer& instanceBuffer) const {
         constexpr vk::CommandBufferBeginInfo beginInfo;
         commandBuffer.begin(beginInfo);
 
@@ -869,11 +909,20 @@ private:
         );
         commandBuffer.setScissor(0, scissor);
 
-        const std::array<vk::Buffer, 1> vertexBuffers{ m_vertexBuffer };
-        constexpr std::array<vk::DeviceSize, 1> offsets{ 0 };
+        const std::array<vk::Buffer, 2> vertexBuffers{ m_vertexBuffer, instanceBuffer };
+        constexpr std::array<vk::DeviceSize, 2> offsets{ 0, 0 };
         commandBuffer.bindVertexBuffers(0, vertexBuffers, offsets);
-
-        commandBuffer.draw(static_cast<uint32_t>(m_vertices.size()), 1, 0, 0);
+        commandBuffer.bindIndexBuffer(m_indexBuffer, 0, vk::IndexType::eUint16);
+        commandBuffer.bindDescriptorSets(
+            vk::PipelineBindPoint::eGraphics,
+            m_pipelineLayout,
+            0,
+            *m_descriptorSets[m_currentFrame],
+            nullptr
+        );
+        commandBuffer.drawIndexed(
+            static_cast<uint32_t>(m_indices.size()), 
+            m_quadInstances.size(), 0, 0, 0);
 
         ImGui_ImplVulkan_RenderDrawData(
             ImGui::GetDrawData(),
@@ -940,32 +989,116 @@ private:
         return 0; // optional
     }
 
-    void createVertexBuffer() {
+    void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
         vk::BufferCreateInfo bufferInfo;
-        bufferInfo.size = sizeof(Vertex) * m_vertices.size();
-        bufferInfo.usage = vk::BufferUsageFlagBits::eVertexBuffer;
+        bufferInfo.size = size;
+        bufferInfo.usage = usage;
         bufferInfo.sharingMode = vk::SharingMode::eExclusive;
-
-        m_vertexBuffer = m_device.createBuffer(bufferInfo);
-
-        const vk::MemoryRequirements memRequirements = m_vertexBuffer.getMemoryRequirements();
-
+        buffer = vk::raii::Buffer(m_device, bufferInfo);
+        vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
         vk::MemoryAllocateInfo allocInfo;
         allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(
-            memRequirements.memoryTypeBits,
-            vk::MemoryPropertyFlagBits::eHostVisible |
-            vk::MemoryPropertyFlagBits::eHostCoherent
-        );
-        m_vertexBufferMemory = m_device.allocateMemory(allocInfo);
-        m_vertexBuffer.bindMemory(m_vertexBufferMemory, 0);
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+        bufferMemory = vk::raii::DeviceMemory(m_device, allocInfo);
+        buffer.bindMemory(*bufferMemory, 0);
+    }
 
-        m_mappedVertexData = m_vertexBufferMemory.mapMemory(0, bufferInfo.size);
+    void copyBuffer(const vk::raii::Buffer& srcBuffer, const vk::raii::Buffer& dstBuffer, const vk::DeviceSize size) const {
+        vk::CommandBufferAllocateInfo allocInfo;
+        allocInfo.level = vk::CommandBufferLevel::ePrimary;
+        allocInfo.commandPool = m_commandPool;
+        allocInfo.commandBufferCount = 1;
+
+        // std::vector<vk::raii::CommandBuffer>
+        auto commandBuffers = m_device.allocateCommandBuffers(allocInfo);
+        const vk::raii::CommandBuffer commandBuffer = std::move(commandBuffers.at(0));
+
+        vk::CommandBufferBeginInfo beginInfo;
+        beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+
+        commandBuffer.begin(beginInfo);
+
+        vk::BufferCopy copyRegion;
+        copyRegion.srcOffset = 0; // optional
+        copyRegion.dstOffset = 0; // optional
+        copyRegion.size = size;
+        commandBuffer.copyBuffer(srcBuffer, dstBuffer, copyRegion);
+
+        commandBuffer.end();
+
+        vk::SubmitInfo submitInfo;
+        submitInfo.setCommandBuffers(*commandBuffer);
+
+        m_graphicsQueue.submit(submitInfo);
+        m_graphicsQueue.waitIdle();
+    }
+
+    void createVertexBuffer() {
+        vk::DeviceSize bufferSize = sizeof(m_vertices[0]) * m_vertices.size();
+
+        vk::raii::DeviceMemory stagingBufferMemory{ nullptr };
+        vk::raii::Buffer stagingBuffer{ nullptr };
+        createBuffer(bufferSize,
+            vk::BufferUsageFlagBits::eTransferSrc,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent,
+            stagingBuffer,
+            stagingBufferMemory
+        );
+
+        m_mappedVertexData = stagingBufferMemory.mapMemory(0, bufferSize);
+        memcpy(m_mappedVertexData, m_vertices.data(), sizeof(m_vertices[0]) * m_vertices.size());
+        stagingBufferMemory.unmapMemory();
+
+        createBuffer(bufferSize,
+            vk::BufferUsageFlagBits::eTransferDst |
+            vk::BufferUsageFlagBits::eVertexBuffer,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            m_vertexBuffer,
+            m_vertexBufferMemory
+        );
+
+        copyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
+    }
+
+    void createInstanceBuffers() {
+        vk::DeviceSize instanceBufferSize = sizeof(m_quadInstances[0]) * m_quadInstances.size();
+
+        m_instanceBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+        m_instanceBufferMemory.reserve(MAX_FRAMES_IN_FLIGHT);
+        m_mappedInstanceData.reserve(MAX_FRAMES_IN_FLIGHT);
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            m_instanceBuffers.emplace_back(nullptr);
+            m_instanceBufferMemory.emplace_back(nullptr);
+            m_mappedInstanceData.emplace_back(nullptr);
+            createBuffer(
+                instanceBufferSize,
+                vk::BufferUsageFlagBits::eVertexBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+                m_instanceBuffers[i],
+                m_instanceBufferMemory[i]
+            );
+            m_mappedInstanceData[i] = m_instanceBufferMemory[i].mapMemory(0, instanceBufferSize);
+        }
+    }
+
+    void createIndexBuffer() {
+        auto bufferSize = sizeof(m_indices[0]) * m_indices.size();
+        createBuffer(
+            bufferSize,
+            vk::BufferUsageFlagBits::eIndexBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+            m_indexBuffer,
+            m_indexBufferMemory
+        );
+        auto mappedIndexData = m_indexBufferMemory.mapMemory(0, bufferSize);
+        memcpy(mappedIndexData, m_indices.data(), bufferSize);
+        m_indexBufferMemory.unmapMemory();
     }
 
     void createUniformBuffers() {
-#if 0
-        constexpr vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+        constexpr vk::DeviceSize bufferSize = sizeof(CameraData);
 
         m_uniformBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
         m_uniformBuffersMemory.reserve(MAX_FRAMES_IN_FLIGHT);
@@ -985,18 +1118,37 @@ private:
 
             m_uniformBuffersMapped[i] = m_uniformBuffersMemory[i].mapMemory(0, bufferSize);
         }
-#endif
     }
 
-    const std::vector<Vertex> getTransformedVertices() {
-        std::vector<Vertex> vert = {};
-        for (const auto& in : m_vertices) {
-            vert.emplace_back(Vertex{ 
-                m_transform() * glm::vec4{ in.pos, 1.0f }, 
-                in.color 
-            });
+    void createDescriptorPool() {
+        vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT);
+        vk::DescriptorPoolCreateInfo poolInfo;
+        poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+        poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        m_descriptorPool = vk::raii::DescriptorPool(m_device, poolInfo);
+    }
+
+    void createDescriptorSets() {
+        std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *m_descriptorSetLayout);
+        vk::DescriptorSetAllocateInfo allocInfo;
+        allocInfo.descriptorPool = m_descriptorPool;
+        allocInfo.setSetLayouts(layouts);
+        m_descriptorSets = m_device.allocateDescriptorSets(allocInfo);
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.buffer = m_uniformBuffers[i];
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(CameraData);
+            vk::WriteDescriptorSet descriptorWrite;
+            descriptorWrite.dstSet = m_descriptorSets[i];
+            descriptorWrite.dstBinding = 0;
+            descriptorWrite.dstArrayElement = 0;
+            descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+            descriptorWrite.setBufferInfo(bufferInfo);
+            m_device.updateDescriptorSets(descriptorWrite, nullptr);
         }
-        return vert;
     }
 
 private:
@@ -1014,9 +1166,9 @@ private:
     vk::raii::Pipeline m_graphicsPipeline = nullptr;
     vk::raii::CommandPool m_commandPool = nullptr;
     vk::raii::SwapchainKHR m_swapChain = nullptr;
-    vk::raii::DeviceMemory m_vertexBufferMemory = nullptr;
-    vk::raii::Buffer m_vertexBuffer = nullptr;
     vk::raii::DescriptorPool m_imguiPool = nullptr;
+    vk::raii::DescriptorPool m_descriptorPool = nullptr;
+    std::vector<vk::raii::DescriptorSet> m_descriptorSets;
     std::vector<vk::raii::ImageView> m_swapChainImageViews;
     std::vector<vk::raii::Framebuffer> m_swapChainFramebuffers;
     std::vector<vk::raii::CommandBuffer> m_commandBuffers;
@@ -1024,8 +1176,13 @@ private:
     std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
     std::vector<vk::raii::Fence> m_inFlightFences;
 
-    vk::raii::DeviceMemory m_indexBufferMemory{ nullptr };
-    vk::raii::Buffer m_indexBuffer{ nullptr };
+    vk::raii::DeviceMemory m_vertexBufferMemory = nullptr;
+    vk::raii::Buffer m_vertexBuffer = nullptr;
+    std::vector<vk::raii::DeviceMemory> m_instanceBufferMemory;
+    std::vector<vk::raii::Buffer> m_instanceBuffers;
+    std::vector<void*> m_mappedInstanceData;
+    vk::raii::DeviceMemory m_indexBufferMemory = nullptr;
+    vk::raii::Buffer m_indexBuffer = nullptr;
     std::vector<vk::raii::DeviceMemory> m_uniformBuffersMemory;
     std::vector<vk::raii::Buffer> m_uniformBuffers;
     std::vector<void*> m_uniformBuffersMapped;
@@ -1036,15 +1193,23 @@ private:
     vk::SurfaceFormatKHR m_swapChainSurfaceFormat;
     std::vector<vk::Image> m_swapChainImages = {};
 
-    std::vector<Vertex> m_vertices = {
-            {{0.0f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
-            {{0.5f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-            {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}}
-
+    std::array<Vertex, 4> m_vertices = std::array<Vertex, 4>{
+        Vertex{{-0.5f, -0.5f, 0.0f}, {1, 0, 0, 1}},
+        Vertex{{0.5f, -0.5f, 0.0f}, {0, 1, 0, 1}},
+        Vertex{{0.5f, 0.5f, 0.0f}, {0, 0, 1, 1}},
+        Vertex{{-0.5f, 0.5f, 0.0f}, {1, 1, 1, 1}}
     };
 
-    Transform m_transform;
-    SceneCamera m_Camera;
+    std::array<QuadInstanceData, 2> m_quadInstances;
+
+    int m_currentQuad = 0;
+
+    const std::vector<uint16_t> m_indices = {
+        0, 1, 2, 2, 3, 0
+    };
+
+    Transform m_transform1, m_transform2, m_cameraTransform;
+    SceneCamera m_camera;
 
     int m_currentFrame = 0;
     bool m_framebufferResized = false;
@@ -1077,4 +1242,5 @@ int main() {
 static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
     HelloTriangleApplication* app = static_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
     app->m_framebufferResized = true;
+    app->m_camera.SetAspectRatio(static_cast<float>(width) / height);
 }

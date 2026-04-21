@@ -365,24 +365,18 @@ void Application::createCommandBuffers() {
 
         commandBuffers[i].beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
-        // Bind pipeline
         commandBuffers[i].bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelineManager->getPipeline("main"));
 
-        // Bind vertex buffer
         vk::Buffer vertexBuffers[] = {*vertexBuffer->get()};
         vk::DeviceSize offsets[] = {0};
         commandBuffers[i].bindVertexBuffers(0, vertexBuffers, offsets);
 
-        // Bind index buffer
         commandBuffers[i].bindIndexBuffer(*indexBuffer->get(), 0, vk::IndexType::eUint32);
 
-        // Draw indexed triangle
         commandBuffers[i].drawIndexed(3, 1, 0, 0, 0);
 
-        // End render pass
         commandBuffers[i].endRenderPass();
 
-        // End command buffer
         commandBuffers[i].end();
     }
 

@@ -97,94 +97,40 @@ private:
     // Flag to track if window was resized
     bool framebufferResized;
 
-    /**
-     * @brief Initialize Vulkan components
-     */
     void initVulkan();
 
-    /**
-     * @brief Cleanup Vulkan resources
-     */
     void cleanup();
 
-    /**
-     * @brief Recreate swap chain when window is resized
-     */
     void recreateSwapChain();
 
-    /**
-     * @brief Cleanup swap chain resources
-     */
     void cleanupSwapChain();
 
-    /**
-     * @brief Cleanup sync objects
-     */
     void cleanupSyncObjects();
 
-    /**
-     * @brief Create Vulkan instance
-     */
     void createInstance();
 
-    /**
-     * @brief Create Vulkan device and queues
-     */
     void createDevice();
 
-    /**
-     * @brief Create swap chain
-     */
     void createSwapChain();
 
-    /**
-     * @brief Create render pass
-     */
     void createRenderPass();
 
-    /**
-     * @brief Create graphics pipeline
-     */
     void createGraphicsPipeline();
 
-    /**
-     * @brief Create framebuffers
-     */
     void createFramebuffers();
 
-    /**
-     * @brief Create command pool
-     */
     void createCommandPool();
 
-    /**
-     * @brief Create vertex buffer
-     */
     void createVertexBuffer();
 
-    /**
-     * @brief Create index buffer
-     */
     void createIndexBuffer();
 
-    /**
-     * @brief Create command buffers
-     */
     void createCommandBuffers();
 
-    /**
-     * @brief Create sync objects
-     */
     void createSyncObjects();
 
-    /**
-     * @brief Draw a frame
-     */
     void drawFrame();
 
-    /**
-     * @brief Main render loop
-     */
     void mainLoop();
 };
 
