@@ -2,6 +2,10 @@ add_executable(VkFromScratch)
 
 target_sources(VkFromScratch PRIVATE
     main.cpp
+    Application.cpp
+    Pipeline.cpp
+    Resources.cpp
+    Rendering.cpp
     Camera.cpp
     imgui_impl_glfw.cpp
     imgui_impl_vulkan.cpp
