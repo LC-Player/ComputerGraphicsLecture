@@ -3,14 +3,14 @@
 
 #include "imgui_impl_vulkan.h"
 #include "imgui_impl_glfw.h"
-#include "imgui/imgui.h"
+#include "imgui.h"
 
 #include <glm/gtc/type_ptr.hpp>
 
 #include <array>
 #include <limits>
 
-void HelloTriangleApplication::mainLoop() {
+void Application::mainLoop() {
     while (!glfwWindowShouldClose(m_window)) {
 
         // update logic
@@ -23,17 +23,17 @@ void HelloTriangleApplication::mainLoop() {
     m_device.waitIdle();
 }
 
-void HelloTriangleApplication::update() {
+void Application::update() {
     if (glfwGetKey(m_window, GLFW_KEY_W) == GLFW_PRESS) {
     }
 }
 
-void HelloTriangleApplication::updateUniformBuffer(const int currentFrame) {
+void Application::updateUniformBuffer(const int currentFrame) {
     CameraData data({m_camera.GetViewProj() * glm::inverse(m_cameraTransform())});
     memcpy(m_uniformBuffersMapped[currentFrame], &data, sizeof(data));
 }
 
-void HelloTriangleApplication::updateInstanceBuffer(const int currentFrame) {
+void Application::updateInstanceBuffer(const int currentFrame) {
     std::array<QuadInstanceData, 2> instances;
     instances[0].transform = m_transform1();
     instances[1].transform = m_transform2();
@@ -41,7 +41,7 @@ void HelloTriangleApplication::updateInstanceBuffer(const int currentFrame) {
         sizeof(QuadInstanceData) * instances.size());
 }
 
-void HelloTriangleApplication::drawFrame() {
+void Application::drawFrame() {
 
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -133,7 +133,33 @@ void HelloTriangleApplication::drawFrame() {
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-void HelloTriangleApplication::recordCommandBuffer(const vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex, const vk::Buffer& instanceBuffer) const {
+vk::raii::CommandBuffer Application::beginSingleTimeCommands() const {
+    vk::CommandBufferAllocateInfo allocInfo;
+    allocInfo.level = vk::CommandBufferLevel::ePrimary;
+    allocInfo.commandPool = m_commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    auto commandBuffers = m_device.allocateCommandBuffers(allocInfo);
+    vk::raii::CommandBuffer commandBuffer = std::move(commandBuffers.at(0));
+
+    vk::CommandBufferBeginInfo beginInfo;
+    beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+
+    commandBuffer.begin(beginInfo);
+
+    return commandBuffer;
+}
+void Application::endSingleTimeCommands(const vk::raii::CommandBuffer& commandBuffer) const {
+    commandBuffer.end();
+
+    vk::SubmitInfo submitInfo;
+    submitInfo.setCommandBuffers(*commandBuffer);
+
+    m_graphicsQueue.submit(submitInfo);
+    m_graphicsQueue.waitIdle();
+}
+
+void Application::recordCommandBuffer(const vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex, const vk::Buffer& instanceBuffer) const {
     constexpr vk::CommandBufferBeginInfo beginInfo;
     commandBuffer.begin(beginInfo);
 
@@ -188,7 +214,7 @@ void HelloTriangleApplication::recordCommandBuffer(const vk::raii::CommandBuffer
     commandBuffer.end();
 }
 
-void HelloTriangleApplication::createCommandPool() {
+void Application::createCommandPool() {
     const auto [graphicsFamily, presentFamily] = findQueueFamilies(m_physicalDevice);
 
     vk::CommandPoolCreateInfo poolInfo;
@@ -198,7 +224,7 @@ void HelloTriangleApplication::createCommandPool() {
     m_commandPool = m_device.createCommandPool(poolInfo);
 }
 
-void HelloTriangleApplication::createCommandBuffers() {
+void Application::createCommandBuffers() {
     vk::CommandBufferAllocateInfo allocInfo;
     allocInfo.commandPool = m_commandPool;
     allocInfo.level = vk::CommandBufferLevel::ePrimary;
@@ -207,7 +233,7 @@ void HelloTriangleApplication::createCommandBuffers() {
     m_commandBuffers = m_device.allocateCommandBuffers(allocInfo);
 }
 
-void HelloTriangleApplication::createSyncObjects() {
+void Application::createSyncObjects() {
     constexpr vk::SemaphoreCreateInfo semaphoreInfo;
     constexpr vk::FenceCreateInfo fenceInfo(
         vk::FenceCreateFlagBits::eSignaled  // flags
@@ -221,7 +247,7 @@ void HelloTriangleApplication::createSyncObjects() {
     }
 }
 
-void HelloTriangleApplication::cleanup() {
+void Application::cleanup() {
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

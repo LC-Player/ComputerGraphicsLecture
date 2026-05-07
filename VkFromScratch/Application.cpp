@@ -6,14 +6,14 @@
 
 #include "imgui_impl_vulkan.h"
 #include "imgui_impl_glfw.h"
-#include "imgui/imgui.h"
+#include "imgui.h"
 
 #include <algorithm>
 #include <iostream>
 #include <map>
 #include <cstring>
 
-void HelloTriangleApplication::run() {
+void Application::run() {
     initWindow();
     initVulkan();
     initImGui();
@@ -22,7 +22,7 @@ void HelloTriangleApplication::run() {
     cleanup();
 }
 
-void HelloTriangleApplication::initWindow() {
+void Application::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
@@ -35,7 +35,7 @@ void HelloTriangleApplication::initWindow() {
     glfwSetFramebufferSizeCallback(m_window, framebufferResizeCallback);
 }
 
-void HelloTriangleApplication::initImGui() {
+void Application::initImGui() {
     vk::DescriptorPoolSize pool_sizes[] = {
         { vk::DescriptorType::eCombinedImageSampler, 1000 },
     };
@@ -83,7 +83,7 @@ void HelloTriangleApplication::initImGui() {
     ImGui_ImplVulkan_DestroyFontUploadObjects();
 }
 
-void HelloTriangleApplication::initComponents() {
+void Application::initComponents() {
     m_camera.SetAspectRatio(m_windowSize.x / m_windowSize.y);
     m_camera.SetPerspective(glm::radians(45.0f), 1, 100);
     m_cameraTransform.translation.z = 5;
@@ -91,7 +91,7 @@ void HelloTriangleApplication::initComponents() {
     m_transform2.translation.x = 1;
 }
 
-void HelloTriangleApplication::initVulkan() {
+void Application::initVulkan() {
     createInstance();
     createSurface();
     pickPhysicalDevice();
@@ -110,11 +110,12 @@ void HelloTriangleApplication::initVulkan() {
     createIndexBuffer();
     createInstanceBuffers();
     createUniformBuffers();
+    createTextureImage();
     createDescriptorPool();
     createDescriptorSets();
 }
 
-void HelloTriangleApplication::createInstance() {
+void Application::createInstance() {
     vk::ApplicationInfo appInfo;
     appInfo.pApplicationName = "Hello Triangle";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -169,7 +170,7 @@ void HelloTriangleApplication::createInstance() {
 
 }
 
-void HelloTriangleApplication::createSurface() {
+void Application::createSurface() {
     VkSurfaceKHR       _surface;
     if (glfwCreateWindowSurface(*m_instance, m_window, nullptr, &_surface) != 0) {
         throw std::runtime_error("failed to create window surface!");
@@ -177,7 +178,7 @@ void HelloTriangleApplication::createSurface() {
     m_surface = vk::raii::SurfaceKHR(m_instance, _surface);
 }
 
-bool HelloTriangleApplication::checkValidationLayerSupport() {
+bool Application::checkValidationLayerSupport() {
 
     auto availableLayers = m_context.enumerateInstanceLayerProperties();
 
@@ -204,7 +205,7 @@ bool HelloTriangleApplication::checkValidationLayerSupport() {
     return true;
 }
 
-std::vector<const char*> HelloTriangleApplication::getRequiredExtensions() {
+std::vector<const char*> Application::getRequiredExtensions() {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions;
     glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -218,7 +219,7 @@ std::vector<const char*> HelloTriangleApplication::getRequiredExtensions() {
     return extensions;
 }
 
-void HelloTriangleApplication::populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
+void Application::populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
     createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
     createInfo.messageSeverity =
@@ -233,7 +234,7 @@ void HelloTriangleApplication::populateDebugMessengerCreateInfo(VkDebugUtilsMess
     createInfo.pUserData = nullptr;
 }
 
-bool HelloTriangleApplication::isDeviceSuitable(vk::raii::PhysicalDevice const& physicalDevice) {
+bool Application::isDeviceSuitable(vk::raii::PhysicalDevice const& physicalDevice) {
     auto deviceProperties = physicalDevice.getProperties();
     auto deviceFeatures = physicalDevice.getFeatures();
 
@@ -244,7 +245,7 @@ bool HelloTriangleApplication::isDeviceSuitable(vk::raii::PhysicalDevice const& 
     return false;
 }
 
-void HelloTriangleApplication::pickPhysicalDevice() {
+void Application::pickPhysicalDevice() {
     auto physicalDevices = vk::raii::PhysicalDevices(m_instance);
     if (physicalDevices.empty()) {
         throw std::runtime_error("failed to find GPUs with Vulkan support!");
@@ -289,7 +290,7 @@ void HelloTriangleApplication::pickPhysicalDevice() {
     assertPhysicalDeviceSupportsFeatures(m_physicalDevice);
 }
 
-HelloTriangleApplication::QueueFamilyIndices HelloTriangleApplication::findQueueFamilies(const vk::raii::PhysicalDevice& device) const {
+Application::QueueFamilyIndices Application::findQueueFamilies(const vk::raii::PhysicalDevice& device) const {
 
     QueueFamilyIndices indices;
     auto queueFamilies = device.getQueueFamilyProperties();
@@ -313,7 +314,7 @@ HelloTriangleApplication::QueueFamilyIndices HelloTriangleApplication::findQueue
     return indices;
 }
 
-void HelloTriangleApplication::createLogicalDevice() {
+void Application::createLogicalDevice() {
     QueueFamilyIndices indices = findQueueFamilies(m_physicalDevice);
 
     if (!indices.isComplete()) {
@@ -351,7 +352,7 @@ void HelloTriangleApplication::createLogicalDevice() {
     m_graphicsQueue = m_device.getQueue(indices.graphicsFamily.value(), 0);
 }
 
-vk::Extent2D HelloTriangleApplication::chooseSwapExtent(vk::SurfaceCapabilitiesKHR const& capabilities) {
+vk::Extent2D Application::chooseSwapExtent(vk::SurfaceCapabilitiesKHR const& capabilities) {
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
         return capabilities.currentExtent;
     }
@@ -364,7 +365,7 @@ vk::Extent2D HelloTriangleApplication::chooseSwapExtent(vk::SurfaceCapabilitiesK
     };
 }
 
-void HelloTriangleApplication::createSwapChain() {
+void Application::createSwapChain() {
     vk::SurfaceCapabilitiesKHR surfaceCapabilities = m_physicalDevice.getSurfaceCapabilitiesKHR(*m_surface);
     m_swapChainExtent = chooseSwapExtent(surfaceCapabilities);
     uint32_t minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
@@ -394,7 +395,7 @@ void HelloTriangleApplication::createSwapChain() {
     m_swapChainImages = m_swapChain.getImages();
 }
 
-void HelloTriangleApplication::createImageViews() {
+void Application::createImageViews() {
     assert(m_swapChainImageViews.empty());
 
     vk::ImageViewCreateInfo imageViewCreateInfo;
@@ -410,7 +411,7 @@ void HelloTriangleApplication::createImageViews() {
     }
 }
 
-void HelloTriangleApplication::createRenderPass() {
+void Application::createRenderPass() {
     vk::AttachmentDescription colorAttachment;
     colorAttachment.format = m_swapChainSurfaceFormat.format;
     colorAttachment.samples = vk::SampleCountFlagBits::e1;
@@ -446,7 +447,7 @@ void HelloTriangleApplication::createRenderPass() {
     m_renderPass = m_device.createRenderPass(renderPassInfo);
 }
 
-void HelloTriangleApplication::createFramebuffers() {
+void Application::createFramebuffers() {
     m_swapChainFramebuffers.reserve(m_swapChainImageViews.size());
     vk::FramebufferCreateInfo framebufferInfo;
     framebufferInfo.renderPass = m_renderPass;
@@ -459,7 +460,7 @@ void HelloTriangleApplication::createFramebuffers() {
     }
 }
 
-void HelloTriangleApplication::recreateSwapChain() {
+void Application::recreateSwapChain() {
     int width = 0, height = 0;
     glfwGetFramebufferSize(m_window, &width, &height);
     while (width == 0 || height == 0) {

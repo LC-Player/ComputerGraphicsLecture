@@ -159,6 +159,19 @@ public:
     static Buffer createStagingBuffer(VulkanDevice* device, vk::DeviceSize size);
 
     /**
+     * @brief Create a buffer with specified parameters
+     *
+     * @param device Vulkan device
+     * @param size Buffer size
+     * @param usage Buffer usage flags
+     * @param properties Memory properties
+     * @return Buffer Created buffer
+     */
+    static Buffer createBuffer(VulkanDevice* device, vk::DeviceSize size,
+                              vk::BufferUsageFlags usage,
+                              vk::MemoryPropertyFlags properties);
+
+    /**
      * @brief Copy data from one buffer to another
      *
      * @param commandBuffer Command buffer to record the copy command

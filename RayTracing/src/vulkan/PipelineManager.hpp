@@ -22,6 +22,7 @@ struct PipelineConfig {
 
     // Vertex input state
     vk::VertexInputBindingDescription vertexBindingDescription = {};
+    std::vector<vk::VertexInputBindingDescription> vertexBindingDescriptions;
     std::vector<vk::VertexInputAttributeDescription> vertexAttributeDescriptions;
 
     // Input assembly

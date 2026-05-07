@@ -34,13 +34,20 @@ target_sources(RayTracing PRIVATE
 target_sources(RayTracing PRIVATE
         src/main.cpp
         src/Application.cpp
+        src/Camera.cpp
+        src/imgui_impl_glfw.cpp
+        src/imgui_impl_vulkan.cpp
+        src/imgui_impl_glfw.h
+        src/imgui_impl_vulkan.h
 )
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
 
 # Set include directories (include all module directories)
 target_include_directories(RayTracing PRIVATE
+        ${CMAKE_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/core
         ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
@@ -52,6 +59,8 @@ target_include_directories(RayTracing PRIVATE
 # Link dependencies
 target_link_libraries(RayTracing PRIVATE
         glfw
+        glm::glm
+        ImGui
         Vulkan::Vulkan
 )
 
@@ -87,6 +96,7 @@ target_compile_definitions(RayTracing PUBLIC
 if(WIN32)
     target_compile_definitions(RayTracing PUBLIC
             RT_PLATFORM_WINDOWS
+            VK_USE_PLATFORM_WIN32_KHR
             GLFW_INCLUDE_VULKAN
     )
 endif()
@@ -104,3 +114,53 @@ add_custom_target(RayTracingAssets ALL
 )
 
 add_dependencies(RayTracing RayTracingAssets)
+
+find_program(SLANGC_EXECUTABLE slangc HINTS "$ENV{VULKAN_SDK}/Bin")
+if (NOT EXISTS ${SLANGC_EXECUTABLE})
+    message(FATAL_ERROR "slangc not found at ${SLANGC_EXECUTABLE}")
+endif()
+
+set(SHADERS_COMPILE_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+
+add_custom_target(RayTracing_CopyShadersToFinal ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:RayTracing>/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${SHADERS_COMPILE_DIR}
+        $<TARGET_FILE_DIR:RayTracing>/shaders
+    COMMENT "Copying compiled shaders to final directory"
+    DEPENDS RayTracing_ShaderAssetsCompiling
+)
+
+function (add_slang_shader_target TARGET)
+    cmake_parse_arguments ("SHADER" "" "" "SOURCES" ${ARGN})
+    set(ENTRY_POINTS -entry vertMain -entry fragMain)
+    set(SPV_FILES "")
+
+    foreach (SOURCE_FILE ${SHADER_SOURCES})
+        get_filename_component(FILE_NAME ${SOURCE_FILE} NAME_WE)
+        set(OUTPUT_SPV ${SHADERS_COMPILE_DIR}/${FILE_NAME}.spv)
+        list(APPEND SPV_FILES ${OUTPUT_SPV})
+
+        add_custom_command (
+            OUTPUT ${OUTPUT_SPV}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_COMPILE_DIR}
+            COMMAND ${SLANGC_EXECUTABLE} ${SOURCE_FILE}
+                    -target spirv -profile spirv_1_4
+                    -emit-spirv-directly -fvk-use-entrypoint-name
+                    ${ENTRY_POINTS} -o ${FILE_NAME}.spv
+            WORKING_DIRECTORY ${SHADERS_COMPILE_DIR}
+            DEPENDS ${SOURCE_FILE}
+            COMMENT "Compiling Slang shader ${SOURCE_FILE} -> ${OUTPUT_SPV}"
+            VERBATIM
+        )
+    endforeach()
+
+    add_custom_target (${TARGET} DEPENDS ${SPV_FILES})
+endfunction()
+
+file(GLOB SHADER_SLANG_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang)
+
+add_slang_shader_target(RayTracing_ShaderAssetsCompiling SOURCES ${SHADER_SLANG_SOURCES})
+
+add_dependencies(RayTracing_CopyShadersToFinal RayTracing_ShaderAssetsCompiling)
+add_dependencies(RayTracing RayTracing_CopyShadersToFinal)

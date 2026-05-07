@@ -117,14 +117,14 @@ uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabi
 }
 
 void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
-    HelloTriangleApplication* app = static_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+    Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
     app->m_framebufferResized = true;
     app->m_camera.SetAspectRatio(static_cast<float>(width) / height);
 }
 
 int main() {
     try {
-        HelloTriangleApplication app;
+        Application app;
         app.run();
     }
     catch (const std::exception& e) {

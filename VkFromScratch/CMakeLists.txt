@@ -9,9 +9,8 @@ target_sources(VkFromScratch PRIVATE
     Camera.cpp
     imgui_impl_glfw.cpp
     imgui_impl_vulkan.cpp
+    stb_image.cpp
 )
-
-add_subdirectory(imgui)
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -25,7 +24,7 @@ target_link_libraries(VkFromScratch PRIVATE
         ${Vulkan_LIBRARIES}
 )
 
-target_include_directories(VkFromScratch PRIVATE ${Vulkan_INCLUDE_DIRS})
+target_include_directories(VkFromScratch PRIVATE ${CMAKE_SOURCE_DIR} ${Vulkan_INCLUDE_DIRS})
 
 # Validation layers configuration
 option(ENABLE_VALIDATION_LAYERS "Enable Vulkan validation layers for debugging" ON)
@@ -45,13 +44,13 @@ else()
 endif()
 
 if(WIN32)
-    target_compile_definitions(RayTracing PUBLIC
+    target_compile_definitions(VkFromScratch PUBLIC
             VK_USE_PLATFORM_WIN32_KHR
             GLFW_INCLUDE_VULKAN
     )
 endif()
 if (MSVC)
-    target_compile_options(RayTracing PRIVATE /utf-8)
+    target_compile_options(VkFromScratch PRIVATE /utf-8)
 endif()
 
 find_program(SLANGC_EXECUTABLE slangc HINTS "$ENV{VULKAN_SDK}/Bin")
@@ -63,13 +62,13 @@ endif()
 set(SHADERS_COMPILE_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 
 # 自定义目标：将编译好的 shader 拷贝到可执行文件目录
-add_custom_target(CopyShadersToFinal ALL
+add_custom_target(VkFromScratch_CopyShadersToFinal ALL
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:VkFromScratch>/shaders
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${SHADERS_COMPILE_DIR}
         $<TARGET_FILE_DIR:VkFromScratch>/shaders
     COMMENT "Copying compiled shaders to final directory"
-    DEPENDS ShaderAssetsCompiling   # 等待编译完成
+    DEPENDS VkFromScratch_ShaderAssetsCompiling   # 等待编译完成
 )
 
 function (add_slang_shader_target TARGET)
@@ -103,11 +102,11 @@ endfunction()
 file(GLOB SHADER_SLANG_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang)
 
 # 编译 shader（输出到 SHADERS_COMPILE_DIR）
-add_slang_shader_target(ShaderAssetsCompiling SOURCES ${SHADER_SLANG_SOURCES})
+add_slang_shader_target(VkFromScratch_ShaderAssetsCompiling SOURCES ${SHADER_SLANG_SOURCES})
 
 # 确保可执行文件依赖于最终的拷贝动作，而不是直接依赖编译目标
-add_dependencies(CopyShadersToFinal ShaderAssetsCompiling)
-add_dependencies(VkFromScratch CopyShadersToFinal)
+add_dependencies(VkFromScratch_CopyShadersToFinal VkFromScratch_ShaderAssetsCompiling)
+add_dependencies(VkFromScratch VkFromScratch_CopyShadersToFinal)
 
 # 原有的 assets 拷贝保持不变
 add_custom_target(VkFromScratchAssets ALL

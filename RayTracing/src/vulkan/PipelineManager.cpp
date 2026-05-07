@@ -28,7 +28,11 @@ vk::raii::Pipeline& PipelineManager::createPipeline(const std::string& name, con
 
     // Vertex input state
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
-    vertexInputInfo.setVertexBindingDescriptions({ config.vertexBindingDescription });
+    if (!config.vertexBindingDescriptions.empty()) {
+        vertexInputInfo.setVertexBindingDescriptions(config.vertexBindingDescriptions);
+    } else {
+        vertexInputInfo.setVertexBindingDescriptions({ config.vertexBindingDescription });
+    }
     vertexInputInfo.setVertexAttributeDescriptions(config.vertexAttributeDescriptions);
 
     // Input assembly state

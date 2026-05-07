@@ -30,10 +30,10 @@ vk::PresentModeKHR chooseSwapPresentMode(std::vector<vk::PresentModeKHR> const& 
 uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities);
 void framebufferResizeCallback(GLFWwindow* window, int width, int height);
 
-class HelloTriangleApplication {
+class Application {
 public:
-    HelloTriangleApplication() = default;
-    ~HelloTriangleApplication() = default;
+    Application() = default;
+    ~Application() = default;
 
     void run();
 
@@ -49,6 +49,8 @@ private:
     void updateUniformBuffer(int currentFrame);
     void updateInstanceBuffer(int currentFrame);
     void drawFrame();
+    vk::raii::CommandBuffer beginSingleTimeCommands() const;
+    void endSingleTimeCommands(const vk::raii::CommandBuffer& commandBuffer) const;
     void cleanup();
 
     bool checkValidationLayerSupport();
@@ -72,6 +74,10 @@ private:
     void createIndexBuffer();
     void createInstanceBuffers();
     void createUniformBuffers();
+    void transitionImageLayout(const vk::raii::Image& image, const vk::Format format, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout) const;
+    void copyBufferToImage(const vk::raii::Buffer& buffer, const vk::raii::Image& image, const uint32_t width, const uint32_t height) const;
+    void createImage(const uint32_t width, const uint32_t height, const vk::Format format, const vk::ImageTiling tiling, const vk::ImageUsageFlags usage, const vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory) const;
+    void createTextureImage();
     void createDescriptorPool();
     void createDescriptorSets();
     void recreateSwapChain();
@@ -125,6 +131,9 @@ private:
     std::vector<vk::raii::DeviceMemory> m_uniformBuffersMemory;
     std::vector<vk::raii::Buffer> m_uniformBuffers;
     std::vector<void*> m_uniformBuffersMapped;
+
+    vk::raii::DeviceMemory m_textureImageMemory{ nullptr };
+    vk::raii::Image m_textureImage{ nullptr };
 
     vk::Extent2D m_swapChainExtent;
     vk::SurfaceFormatKHR m_swapChainSurfaceFormat;

@@ -4,6 +4,11 @@
 #include <vulkan/vulkan_raii.hpp>
 #include <vector>
 #include <memory>
+#include <array>
+
+#include "type.h"
+#include "Camera.h"
+#include "Transform.h"
 
 // Forward declarations
 namespace RYRayTracing {
@@ -65,6 +70,22 @@ private:
     // Index buffer for triangle
     std::unique_ptr<Buffer> indexBuffer;
 
+    // Instance buffers for instanced rendering
+    std::vector<std::unique_ptr<Buffer>> instanceBuffers;
+    std::vector<void*> mappedInstanceData;
+
+    // Uniform buffers for camera data
+    std::vector<std::unique_ptr<Buffer>> uniformBuffers;
+    std::vector<void*> mappedUniformData;
+
+    // Descriptor set layout and pool
+    vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
+    vk::raii::DescriptorPool descriptorPool = nullptr;
+    std::vector<vk::raii::DescriptorSet> descriptorSets;
+
+    // ImGui descriptor pool
+    vk::raii::DescriptorPool imguiPool = nullptr;
+
     // Shaders
     std::unique_ptr<ShaderModule> vertexShader;
     std::unique_ptr<ShaderModule> fragmentShader;
@@ -97,7 +118,20 @@ private:
     // Flag to track if window was resized
     bool framebufferResized;
 
+    // Quad instance data
+    std::array<QuadInstanceData, 2> quadInstances;
+
+    // Transform data for two quads and camera
+    Transform transform1;
+    Transform transform2;
+    Transform cameraTransform;
+    SceneCamera camera;
+
     void initVulkan();
+
+    void initImGui();
+
+    void initComponents();
 
     void cleanup();
 
@@ -125,9 +159,23 @@ private:
 
     void createIndexBuffer();
 
+    void createInstanceBuffers();
+
+    void createUniformBuffers();
+
+    void createDescriptorSetLayout();
+
+    void createDescriptorPool();
+
+    void createDescriptorSets();
+
     void createCommandBuffers();
 
     void createSyncObjects();
+
+    void updateUniformBuffer(size_t currentFrame);
+
+    void updateInstanceBuffer(size_t currentFrame);
 
     void drawFrame();
 

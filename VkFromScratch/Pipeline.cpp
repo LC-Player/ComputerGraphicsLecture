@@ -4,7 +4,7 @@
 #include <fstream>
 #include <array>
 
-void HelloTriangleApplication::createDescriptorSetLayout() {
+void Application::createDescriptorSetLayout() {
     vk::DescriptorSetLayoutBinding uboLayoutBinding;
     uboLayoutBinding.binding = 0;
     uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
@@ -16,7 +16,7 @@ void HelloTriangleApplication::createDescriptorSetLayout() {
     m_descriptorSetLayout = m_device.createDescriptorSetLayout(layoutInfo);
 }
 
-vk::raii::ShaderModule HelloTriangleApplication::createShaderModule(const std::vector<char>& code) const {
+vk::raii::ShaderModule Application::createShaderModule(const std::vector<char>& code) const {
     vk::ShaderModuleCreateInfo createInfo;
     createInfo.codeSize = code.size() * sizeof(char);
     createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
@@ -24,7 +24,7 @@ vk::raii::ShaderModule HelloTriangleApplication::createShaderModule(const std::v
     return shaderModule;
 }
 
-void HelloTriangleApplication::createGraphicsPipeline() {
+void Application::createGraphicsPipeline() {
     auto shaderCode = readFile("shaders/shader.spv");
     vk::raii::ShaderModule shaderModule = createShaderModule(shaderCode);
 

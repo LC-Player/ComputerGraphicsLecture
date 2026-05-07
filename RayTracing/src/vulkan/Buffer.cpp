@@ -244,6 +244,18 @@ Buffer Buffer::createStagingBuffer(VulkanDevice* device, vk::DeviceSize size) {
     return Buffer(device, config);
 }
 
+Buffer Buffer::createBuffer(VulkanDevice* device, vk::DeviceSize size,
+                           vk::BufferUsageFlags usage,
+                           vk::MemoryPropertyFlags properties) {
+    BufferConfig config;
+    config.size = size;
+    config.usage = usage;
+    config.properties = properties;
+
+    LOG_INFO("Buffer created: size=" + std::to_string(size));
+    return Buffer(device, config);
+}
+
 void Buffer::copyBuffer(vk::raii::CommandBuffer& commandBuffer,
                        vk::Buffer srcBuffer, vk::Buffer dstBuffer,
                        vk::DeviceSize size,
