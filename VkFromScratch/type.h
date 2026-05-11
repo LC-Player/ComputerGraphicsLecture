@@ -1,3 +1,4 @@
+// type.h
 #pragma once
 #include <glm/glm.hpp>
 
@@ -6,12 +7,9 @@
 struct Vertex {
     glm::vec3 local;
     glm::vec4 color;
-};
-
-struct QuadInstanceData {
+    glm::vec2 texCoord;
     glm::mat4 transform;
 };
-
 
 inline vk::VertexInputBindingDescription getVertexBindingDescription() {
     vk::VertexInputBindingDescription description;
@@ -20,16 +18,9 @@ inline vk::VertexInputBindingDescription getVertexBindingDescription() {
     description.inputRate = vk::VertexInputRate::eVertex;
     return description;
 }
-inline vk::VertexInputBindingDescription getInstanceBindingDescription() {
-    vk::VertexInputBindingDescription description;
-    description.binding = 1;
-    description.stride = sizeof(QuadInstanceData);
-    description.inputRate = vk::VertexInputRate::eInstance;
-    return description;
-}
 
-inline std::array<vk::VertexInputAttributeDescription, 6>  getVertexAttributeDescriptions() {
-    std::array<vk::VertexInputAttributeDescription, 6> attributeDescriptions;
+inline std::array<vk::VertexInputAttributeDescription, 7> getVertexAttributeDescriptions() {
+    std::array<vk::VertexInputAttributeDescription, 7> attributeDescriptions;
 
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
@@ -41,11 +32,16 @@ inline std::array<vk::VertexInputAttributeDescription, 6>  getVertexAttributeDes
     attributeDescriptions[1].format = vk::Format::eR32G32B32A32Sfloat;
     attributeDescriptions[1].offset = offsetof(Vertex, color);
 
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = vk::Format::eR32G32Sfloat;
+    attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
     for (int i = 0; i < 4; i++) {
-        attributeDescriptions[2 + i].binding = 1;
-        attributeDescriptions[2 + i].location = 2 + i;
-        attributeDescriptions[2 + i].format = vk::Format::eR32G32B32A32Sfloat;
-        attributeDescriptions[2 + i].offset = offsetof(QuadInstanceData, transform) + sizeof(glm::vec4) * i;
+        attributeDescriptions[3 + i].binding = 0;
+        attributeDescriptions[3 + i].location = 3 + i;
+        attributeDescriptions[3 + i].format = vk::Format::eR32G32B32A32Sfloat;
+        attributeDescriptions[3 + i].offset = offsetof(Vertex, transform) + sizeof(glm::vec4) * i;
     }
 
     return attributeDescriptions;

@@ -13,7 +13,16 @@ void Application::createDescriptorSetLayout() {
 
     vk::DescriptorSetLayoutCreateInfo layoutInfo;
     layoutInfo.setBindings(uboLayoutBinding);
-    m_descriptorSetLayout = m_device.createDescriptorSetLayout(layoutInfo);
+    m_descriptorSetLayouts.emplace_back(m_device.createDescriptorSetLayout(layoutInfo));
+    vk::DescriptorSetLayoutBinding samplerLayoutBinding;
+    samplerLayoutBinding.binding = 0; // 新描述符集，因此依然从 0 开始
+    samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    samplerLayoutBinding.descriptorCount = 1;
+    samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+    vk::DescriptorSetLayoutCreateInfo samplerLayoutInfo;
+
+    samplerLayoutInfo.setBindings( samplerLayoutBinding );
+    m_descriptorSetLayouts.emplace_back( m_device.createDescriptorSetLayout( samplerLayoutInfo ) );
 }
 
 vk::raii::ShaderModule Application::createShaderModule(const std::vector<char>& code) const {
@@ -48,7 +57,7 @@ void Application::createGraphicsPipeline() {
 
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
 
-    std::array<vk::VertexInputBindingDescription, 2> bindingDescription = { getVertexBindingDescription(), getInstanceBindingDescription() };
+    auto bindingDescription = getVertexBindingDescription();
     const auto attributeDescriptions = getVertexAttributeDescriptions();
     vertexInputInfo.setVertexBindingDescriptions(bindingDescription);
     vertexInputInfo.setVertexAttributeDescriptions(attributeDescriptions);
@@ -107,8 +116,20 @@ void Application::createGraphicsPipeline() {
     colorBlending.setAttachments(colorBlendAttachment);
 
     vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
-    pipelineLayoutInfo.setSetLayouts(*m_descriptorSetLayout);
+    const std::vector<vk::DescriptorSetLayout> descriptorSetLayouts(m_descriptorSetLayouts.begin(), m_descriptorSetLayouts.end());
+    pipelineLayoutInfo.setSetLayouts(descriptorSetLayouts);
     m_pipelineLayout = m_device.createPipelineLayout(pipelineLayoutInfo);
+
+    vk::PipelineDepthStencilStateCreateInfo depthStencil;
+    depthStencil.depthTestEnable = true;
+    depthStencil.depthWriteEnable = true;
+    depthStencil.depthCompareOp = vk::CompareOp::eLess;
+    depthStencil.depthBoundsTestEnable = false; // Optional
+    depthStencil.minDepthBounds = 0.0f; // Optional if depthBoundsTestEnable is false
+    depthStencil.maxDepthBounds = 1.0f; // Optional if depthBoundsTestEnable is false
+    depthStencil.stencilTestEnable = false; // Optional
+    depthStencil.front = vk::StencilOpState{}; // Optional if stencilTestEnable is false
+    depthStencil.back = vk::StencilOpState{}; // Optional if stencilTestEnable is false
 
     vk::GraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.stageCount = 2;
@@ -120,6 +141,7 @@ void Application::createGraphicsPipeline() {
     pipelineInfo.pMultisampleState = &multisampling;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.layout = m_pipelineLayout;
     pipelineInfo.renderPass = m_renderPass;
     pipelineInfo.subpass = 0;

@@ -43,51 +43,16 @@ void Application::copyBuffer(const vk::raii::Buffer& srcBuffer, const vk::raii::
 void Application::createVertexBuffer() {
     vk::DeviceSize bufferSize = sizeof(m_vertices[0]) * m_vertices.size();
 
-    vk::raii::DeviceMemory stagingBufferMemory{ nullptr };
-    vk::raii::Buffer stagingBuffer{ nullptr };
     createBuffer(bufferSize,
-        vk::BufferUsageFlagBits::eTransferSrc,
+        vk::BufferUsageFlagBits::eVertexBuffer,
         vk::MemoryPropertyFlagBits::eHostVisible |
         vk::MemoryPropertyFlagBits::eHostCoherent,
-        stagingBuffer,
-        stagingBufferMemory
-    );
-
-    void* mappedStaging = stagingBufferMemory.mapMemory(0, bufferSize);
-    memcpy(mappedStaging, m_vertices.data(), sizeof(m_vertices[0]) * m_vertices.size());
-    stagingBufferMemory.unmapMemory();
-
-    createBuffer(bufferSize,
-        vk::BufferUsageFlagBits::eTransferDst |
-        vk::BufferUsageFlagBits::eVertexBuffer,
-        vk::MemoryPropertyFlagBits::eDeviceLocal,
         m_vertexBuffer,
         m_vertexBufferMemory
     );
 
-    copyBuffer(stagingBuffer, m_vertexBuffer, bufferSize);
-}
-
-void Application::createInstanceBuffers() {
-    vk::DeviceSize instanceBufferSize = sizeof(m_quadInstances[0]) * m_quadInstances.size();
-
-    m_instanceBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
-    m_instanceBufferMemory.reserve(MAX_FRAMES_IN_FLIGHT);
-    m_mappedInstanceData.reserve(MAX_FRAMES_IN_FLIGHT);
-
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        m_instanceBuffers.emplace_back(nullptr);
-        m_instanceBufferMemory.emplace_back(nullptr);
-        m_mappedInstanceData.emplace_back(nullptr);
-        createBuffer(
-            instanceBufferSize,
-            vk::BufferUsageFlagBits::eVertexBuffer,
-            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-            m_instanceBuffers[i],
-            m_instanceBufferMemory[i]
-        );
-        m_mappedInstanceData[i] = m_instanceBufferMemory[i].mapMemory(0, instanceBufferSize);
-    }
+    m_vertexBufferMapped = m_vertexBufferMemory.mapMemory(0, bufferSize);
+    memcpy(m_vertexBufferMapped, m_vertices.data(), bufferSize);
 }
 
 void Application::createIndexBuffer() {
@@ -304,18 +269,48 @@ void Application::createTextureImage() {
     );
 }
 
+void Application::createTextureImageView() {
+    m_textureImageView = createImageView(m_textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+}
+
+void Application::createTextureSampler() {
+    vk::SamplerCreateInfo samplerInfo;
+    samplerInfo.magFilter = vk::Filter::eLinear;
+    samplerInfo.minFilter = vk::Filter::eLinear;
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.anisotropyEnable = true;
+    const auto properties = m_physicalDevice.getProperties();
+    samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+    samplerInfo.borderColor = vk::BorderColor::eIntOpaqueBlack;
+    samplerInfo.unnormalizedCoordinates = false;
+    samplerInfo.compareEnable = false;
+    samplerInfo.compareOp = vk::CompareOp::eAlways;
+    samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+    m_textureSampler = m_device.createSampler(samplerInfo);
+}
+
 void Application::createDescriptorPool() {
-    vk::DescriptorPoolSize poolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT);
+    std::array<vk::DescriptorPoolSize, 2> poolSizes;
+    poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
+    poolSizes[1].descriptorCount = 1;
+
     vk::DescriptorPoolCreateInfo poolInfo;
     poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT /* ubo */ + 1 /* texture */;
+    poolInfo.setPoolSizes(poolSizes);
+
     m_descriptorPool = vk::raii::DescriptorPool(m_device, poolInfo);
 }
 
 void Application::createDescriptorSets() {
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *m_descriptorSetLayout);
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_descriptorSetLayouts[0]);
     vk::DescriptorSetAllocateInfo allocInfo;
     allocInfo.descriptorPool = m_descriptorPool;
     allocInfo.setSetLayouts(layouts);
@@ -333,4 +328,23 @@ void Application::createDescriptorSets() {
         descriptorWrite.setBufferInfo(bufferInfo);
         m_device.updateDescriptorSets(descriptorWrite, nullptr);
     }
+
+    // 分配组合图像采样器描述符集
+    allocInfo.setSetLayouts( *m_descriptorSetLayouts[1] ); // 需要一次 * 显式转换
+    std::vector<vk::raii::DescriptorSet> sets = m_device.allocateDescriptorSets(allocInfo);
+    m_combinedDescriptorSet = std::move(sets.at(0));
+
+    vk::DescriptorImageInfo imageInfo;
+    imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    imageInfo.imageView = m_textureImageView;
+    imageInfo.sampler = m_textureSampler;
+
+    vk::WriteDescriptorSet combinedDescriptorWrite;
+    combinedDescriptorWrite.dstSet = m_combinedDescriptorSet;
+    combinedDescriptorWrite.dstBinding = 0;
+    combinedDescriptorWrite.dstArrayElement = 0;
+    combinedDescriptorWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    combinedDescriptorWrite.setImageInfo(imageInfo);
+
+    m_device.updateDescriptorSets(combinedDescriptorWrite, nullptr);
 }

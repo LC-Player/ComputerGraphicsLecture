@@ -33,12 +33,14 @@ void Application::updateUniformBuffer(const int currentFrame) {
     memcpy(m_uniformBuffersMapped[currentFrame], &data, sizeof(data));
 }
 
-void Application::updateInstanceBuffer(const int currentFrame) {
-    std::array<QuadInstanceData, 2> instances;
-    instances[0].transform = m_transform1();
-    instances[1].transform = m_transform2();
-    memcpy(m_mappedInstanceData[currentFrame], instances.data(),
-        sizeof(QuadInstanceData) * instances.size());
+void Application::updateVertexBuffer(const int currentFrame) {
+    auto* vertices = static_cast<Vertex*>(m_vertexBufferMapped);
+    glm::mat4 t1 = m_transform1();
+    glm::mat4 t2 = m_transform2();
+    for (int i = 0; i < 4; i++) {
+        vertices[i].transform = t1;
+        vertices[i + 4].transform = t2;
+    }
 }
 
 void Application::drawFrame() {
@@ -94,10 +96,10 @@ void Application::drawFrame() {
     // Only reset the fence if we are submitting work
     m_device.resetFences(*m_inFlightFences[m_currentFrame]);
 
-    updateInstanceBuffer(m_currentFrame);
+    updateVertexBuffer(m_currentFrame);
     updateUniformBuffer(m_currentFrame);
     m_commandBuffers[m_currentFrame].reset();
-    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex, m_instanceBuffers[m_currentFrame]);
+    recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex);
 
     vk::SubmitInfo submitInfo;
 
@@ -159,7 +161,7 @@ void Application::endSingleTimeCommands(const vk::raii::CommandBuffer& commandBu
     m_graphicsQueue.waitIdle();
 }
 
-void Application::recordCommandBuffer(const vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex, const vk::Buffer& instanceBuffer) const {
+void Application::recordCommandBuffer(const vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex) const {
     constexpr vk::CommandBufferBeginInfo beginInfo;
     commandBuffer.begin(beginInfo);
 
@@ -169,8 +171,11 @@ void Application::recordCommandBuffer(const vk::raii::CommandBuffer& commandBuff
 
     renderPassInfo.renderArea.offset = vk::Offset2D{ 0, 0 };
     renderPassInfo.renderArea.extent = m_swapChainExtent;
-    vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-    renderPassInfo.setClearValues(clearColor);
+
+    std::array<vk::ClearValue, 2> clearValues;
+    clearValues[0].color = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+    clearValues[1].depthStencil = vk::ClearDepthStencilValue(1.0f, 0);
+    renderPassInfo.setClearValues(clearValues);
 
     commandBuffer.beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
@@ -190,20 +195,20 @@ void Application::recordCommandBuffer(const vk::raii::CommandBuffer& commandBuff
     );
     commandBuffer.setScissor(0, scissor);
 
-    const std::array<vk::Buffer, 2> vertexBuffers{ m_vertexBuffer, instanceBuffer };
-    constexpr std::array<vk::DeviceSize, 2> offsets{ 0, 0 };
-    commandBuffer.bindVertexBuffers(0, vertexBuffers, offsets);
+    commandBuffer.bindVertexBuffers(0, *m_vertexBuffer, {0});
     commandBuffer.bindIndexBuffer(m_indexBuffer, 0, vk::IndexType::eUint16);
+    const std::array<vk::DescriptorSet, 2> descriptorSets{
+        m_descriptorSets[m_currentFrame],
+        m_combinedDescriptorSet
+    };
     commandBuffer.bindDescriptorSets(
         vk::PipelineBindPoint::eGraphics,
         m_pipelineLayout,
         0,
-        *m_descriptorSets[m_currentFrame],
+        descriptorSets,
         nullptr
     );
-    commandBuffer.drawIndexed(
-        static_cast<uint32_t>(m_indices.size()),
-        m_quadInstances.size(), 0, 0, 0);
+    commandBuffer.drawIndexed(static_cast<uint32_t>(m_indices.size()), 1, 0, 0, 0);
 
     ImGui_ImplVulkan_RenderDrawData(
         ImGui::GetDrawData(),
@@ -233,6 +238,32 @@ void Application::createCommandBuffers() {
     m_commandBuffers = m_device.allocateCommandBuffers(allocInfo);
 }
 
+vk::Format Application::findDepthFormat(const std::vector<vk::Format>& candidates) const {
+    for(const vk::Format format : candidates) {
+        // vk::FormatProperties
+        const auto props = m_physicalDevice.getFormatProperties(format);
+        if(props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment){
+            return format;
+        }
+    }
+    throw std::runtime_error("failed to find supported format!");
+}
+
+void Application::createDepthResources() {
+    const vk::Format depthFormat = findDepthFormat({vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint});
+    createImage(
+        m_swapChainExtent.width,
+        m_swapChainExtent.height,
+        depthFormat,
+        vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eDepthStencilAttachment,
+        vk::MemoryPropertyFlagBits::eDeviceLocal,
+        m_depthImage,
+        m_depthImageMemory
+    );
+    m_depthImageView = createImageView(m_depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth);
+}
+
 void Application::createSyncObjects() {
     constexpr vk::SemaphoreCreateInfo semaphoreInfo;
     constexpr vk::FenceCreateInfo fenceInfo(
@@ -252,9 +283,7 @@ void Application::cleanup() {
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    for (auto& it : m_instanceBufferMemory) {
-        it.unmapMemory();
-    }
+    m_vertexBufferMemory.unmapMemory();
     for (const auto& it : m_uniformBuffersMemory) {
         it.unmapMemory();
     }

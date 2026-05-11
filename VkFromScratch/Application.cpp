@@ -99,18 +99,20 @@ void Application::initVulkan() {
     createSwapChain();
     createImageViews();
     createRenderPass();
-    createFramebuffers();
     createDescriptorSetLayout();
     createGraphicsPipeline();
     createCommandPool();
     createCommandBuffers();
+    createDepthResources();
+    createFramebuffers();
     createSyncObjects();
 
     createVertexBuffer();
     createIndexBuffer();
-    createInstanceBuffers();
     createUniformBuffers();
     createTextureImage();
+    createTextureImageView();
+    createTextureSampler();
     createDescriptorPool();
     createDescriptorSets();
 }
@@ -205,7 +207,7 @@ bool Application::checkValidationLayerSupport() {
     return true;
 }
 
-std::vector<const char*> Application::getRequiredExtensions() {
+std::vector<const char*> Application::getRequiredExtensions() const {
     uint32_t glfwExtensionCount = 0;
     const char** glfwExtensions;
     glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -238,11 +240,15 @@ bool Application::isDeviceSuitable(vk::raii::PhysicalDevice const& physicalDevic
     auto deviceProperties = physicalDevice.getProperties();
     auto deviceFeatures = physicalDevice.getFeatures();
 
-    if (deviceProperties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu && deviceFeatures.geometryShader) {
-        return true;
+    if (deviceProperties.deviceType != vk::PhysicalDeviceType::eDiscreteGpu) {
+        return false;
     }
 
-    return false;
+    if (!deviceFeatures.geometryShader || !deviceFeatures.samplerAnisotropy) {
+        return false;
+    }
+
+    return true;
 }
 
 void Application::pickPhysicalDevice() {
@@ -332,7 +338,7 @@ void Application::createLogicalDevice() {
         vk::PhysicalDeviceVulkan11Features,
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
     > featureChain = {
-        vk::PhysicalDeviceFeatures2{},
+        vk::PhysicalDeviceFeatures2{}.setFeatures(vk::PhysicalDeviceFeatures{}.setSamplerAnisotropy(true)),
         vk::PhysicalDeviceVulkan11Features{}.setShaderDrawParameters(true),
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT{}.setExtendedDynamicState(true)
     };
@@ -398,16 +404,9 @@ void Application::createSwapChain() {
 void Application::createImageViews() {
     assert(m_swapChainImageViews.empty());
 
-    vk::ImageViewCreateInfo imageViewCreateInfo;
-    imageViewCreateInfo.viewType = vk::ImageViewType::e2D;
-    imageViewCreateInfo.format = m_swapChainSurfaceFormat.format;
-    imageViewCreateInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 };
-    imageViewCreateInfo.components = {
-        vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
-        vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity };
-    for (auto& image : m_swapChainImages) {
-        imageViewCreateInfo.image = image;
-        m_swapChainImageViews.emplace_back(m_device, imageViewCreateInfo);
+    m_swapChainImageViews.reserve( m_swapChainImages.size() );
+    for (const auto& image : m_swapChainImages) {
+        m_swapChainImageViews.emplace_back( createImageView(image, m_swapChainSurfaceFormat.format, vk::ImageAspectFlagBits::eColor) );
     }
 }
 
@@ -422,25 +421,42 @@ void Application::createRenderPass() {
     colorAttachment.initialLayout = vk::ImageLayout::eUndefined;
     colorAttachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
 
+    vk::AttachmentDescription depthAttachment;
+    depthAttachment.format = findDepthFormat({vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint});
+    depthAttachment.samples = vk::SampleCountFlagBits::e1;
+    depthAttachment.loadOp = vk::AttachmentLoadOp::eClear;
+    depthAttachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+    depthAttachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+    depthAttachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+    depthAttachment.initialLayout = vk::ImageLayout::eUndefined;
+    depthAttachment.finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
     vk::AttachmentReference colorAttachmentRef;
     colorAttachmentRef.attachment = 0;
     colorAttachmentRef.layout = vk::ImageLayout::eColorAttachmentOptimal;
 
+    vk::AttachmentReference depthAttachmentRef;
+    depthAttachmentRef.attachment = 1;
+    depthAttachmentRef.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+
     vk::SubpassDescription subpass;
     subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
     subpass.setColorAttachments(colorAttachmentRef);
+    subpass.setPDepthStencilAttachment(&depthAttachmentRef);
+
+    const std::array attachments = { colorAttachment, depthAttachment };
 
     vk::RenderPassCreateInfo renderPassInfo;
-    renderPassInfo.setAttachments(colorAttachment);
+    renderPassInfo.setAttachments(attachments);
     renderPassInfo.setSubpasses(subpass);
 
     vk::SubpassDependency dependency;
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
-    dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
+    dependency.srcStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
     dependency.srcAccessMask = {};
-    dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-    dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite;
+    dependency.dstStageMask = vk::PipelineStageFlagBits::eColorAttachmentOutput | vk::PipelineStageFlagBits::eEarlyFragmentTests;
+    dependency.dstAccessMask = vk::AccessFlagBits::eColorAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentWrite;
 
     renderPassInfo.setDependencies(dependency);
 
@@ -455,8 +471,9 @@ void Application::createFramebuffers() {
     framebufferInfo.height = m_swapChainExtent.height;
     framebufferInfo.layers = 1;
     for (const auto& imageView : m_swapChainImageViews) {
-        framebufferInfo.setAttachments(*imageView);
-        m_swapChainFramebuffers.emplace_back(m_device.createFramebuffer(framebufferInfo));
+        const std::array<vk::ImageView, 2> imageViews { imageView, m_depthImageView };
+        framebufferInfo.setAttachments( imageViews );
+        m_swapChainFramebuffers.emplace_back( m_device.createFramebuffer(framebufferInfo) );
     }
 }
 
@@ -480,4 +497,18 @@ void Application::recreateSwapChain() {
     createFramebuffers();
 
     m_framebufferResized = false;
+}
+
+vk::raii::ImageView Application::createImageView(const vk::Image image, const vk::Format format, const vk::ImageAspectFlags aspectFlags) const {
+    vk::ImageViewCreateInfo viewInfo;
+    viewInfo.image = image;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = aspectFlags;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    return m_device.createImageView(viewInfo);
 }

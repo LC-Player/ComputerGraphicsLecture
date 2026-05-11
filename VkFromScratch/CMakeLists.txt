@@ -15,12 +15,14 @@ target_sources(VkFromScratch PRIVATE
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(tinyobjloader CONFIG REQUIRED)
 
 # Link dependencies
 target_link_libraries(VkFromScratch PRIVATE
         glfw
         glm::glm
         ImGui
+        tinyobjloader::tinyobjloader
         ${Vulkan_LIBRARIES}
 )
 
