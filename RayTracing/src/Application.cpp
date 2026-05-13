@@ -743,7 +743,9 @@ void Application::drawFrame() {
         if (ImGui::CollapsingHeader(name.c_str())) {
             ImGui::DragFloat3("Translation", glm::value_ptr(instance.transform.translation), 0.01f);
             ImGui::DragFloat3("Rotation", glm::value_ptr(instance.transform.rotation), 0.01f);
-            ImGui::DragFloat3("Scale", glm::value_ptr(instance.transform.scale), 0.01f);
+            float scale = instance.transform.scale.x;
+            ImGui::DragFloat("Scale", &scale, 0.01f);
+            instance.transform.scale = glm::vec3(scale);
             ImGui::ColorEdit4("Color", glm::value_ptr(instance.color));
         }
         ImGui::PopID();
