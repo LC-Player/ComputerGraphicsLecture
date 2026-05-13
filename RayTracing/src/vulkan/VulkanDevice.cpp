@@ -130,16 +130,13 @@ void VulkanDevice::createLogicalDevice(vk::raii::SurfaceKHR& surface) {
                             __FUNCTION__, __FILE__, __LINE__);
     }
 
-    // Device features
-    vk::PhysicalDeviceFeatures enabledFeatures = {};
-
     // Device create info
     vk::DeviceCreateInfo createInfo{
         {},
         queueCreateInfos,
         {},  // No validation layers at device level (deprecated)
         config.requiredExtensions,
-        &enabledFeatures
+        &config.requiredFeatures
     };
 
     try {

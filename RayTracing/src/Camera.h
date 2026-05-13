@@ -79,3 +79,7 @@ inline const std::pair<SceneCamera::ProjectionType, const char*> ProjectionTypeM
 	{ SceneCamera::ProjectionType::Perspective,  "Perspective"  },
 	{ SceneCamera::ProjectionType::Orthographic, "Orthographic" },
 };
+
+struct CameraData {
+	glm::mat4 viewProj;
+};

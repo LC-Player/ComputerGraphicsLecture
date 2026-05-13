@@ -190,7 +190,7 @@ public:
 private:
     VulkanDevice* device = nullptr;  // Non-owning pointer, lifetime managed externally
     vk::raii::Buffer buffer = nullptr;
-    vk::raii::DeviceMemory memory = nullptr;
+    vk::raii::DeviceMemory m_memory = nullptr;
     vk::DeviceSize size;
     vk::BufferUsageFlags usage;
     vk::MemoryPropertyFlags properties;
@@ -202,7 +202,7 @@ private:
      *
      * @throws VulkanException if buffer creation fails
      */
-    void createBuffer();
+    void implementCreateBuffer();
 
     /**
      * @brief Allocate and bind memory for the buffer

@@ -22,7 +22,7 @@ Buffer::Buffer(VulkanDevice* device, const BufferConfig& config)
               ", usage=" + std::to_string(static_cast<uint32_t>(usage)) +
               ", properties=" + std::to_string(static_cast<uint32_t>(properties)));
 
-    createBuffer();
+    implementCreateBuffer();
     allocateMemory();
 
     LOG_INFO("Buffer created successfully");
@@ -37,7 +37,7 @@ void* Buffer::map(vk::DeviceSize offset, vk::DeviceSize size) {
     vk::DeviceSize mapSize = (size == VK_WHOLE_SIZE) ? this->size : size;
 
     try {
-        mappedMemory = memory.mapMemory(offset, mapSize);
+        mappedMemory = m_memory.mapMemory(offset, mapSize);
         isMapped = true;
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(), std::string("Failed to map buffer memory: ") + e.what(),
@@ -56,7 +56,7 @@ void Buffer::unmap() {
         return;
     }
 
-    memory.unmapMemory();
+    m_memory.unmapMemory();
     mappedMemory = nullptr;
     isMapped = false;
 
@@ -84,7 +84,7 @@ void Buffer::copyFrom(const void* data, vk::DeviceSize size, vk::DeviceSize offs
     // If memory is not host coherent, flush the memory
     if (!(properties & vk::MemoryPropertyFlagBits::eHostCoherent)) {
         vk::MappedMemoryRange memoryRange{
-            *memory,
+            *m_memory,
             offset,
             size
         };
@@ -118,7 +118,7 @@ void Buffer::copyTo(void* data, vk::DeviceSize size, vk::DeviceSize offset) cons
     // Map buffer memory
     void* mappedData;
     try {
-        mappedData = memory.mapMemory(offset, size);
+        mappedData = m_memory.mapMemory(offset, size);
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(), std::string("Failed to map buffer memory: ") + e.what(),
                             __FUNCTION__, __FILE__, __LINE__);
@@ -127,7 +127,7 @@ void Buffer::copyTo(void* data, vk::DeviceSize size, vk::DeviceSize offset) cons
     // If memory is not host coherent, invalidate the memory
     if (!(properties & vk::MemoryPropertyFlagBits::eHostCoherent)) {
         vk::MappedMemoryRange memoryRange{
-            *memory,
+            *m_memory,
             offset,
             size
         };
@@ -144,7 +144,7 @@ void Buffer::copyTo(void* data, vk::DeviceSize size, vk::DeviceSize offset) cons
     memcpy(data, mappedData, size);
 
     // Unmap buffer memory
-    memory.unmapMemory();
+    m_memory.unmapMemory();
 
     LOG_DEBUG("Copied " + std::to_string(size) + " bytes from buffer at offset " + std::to_string(offset));
 }
@@ -274,7 +274,7 @@ void Buffer::copyBuffer(vk::raii::CommandBuffer& commandBuffer,
               ", dstOffset=" + std::to_string(dstOffset));
 }
 
-void Buffer::createBuffer() {
+void Buffer::implementCreateBuffer() {
     vk::BufferCreateInfo bufferInfo;
     bufferInfo.setSize(size);
     bufferInfo.setUsage(usage);
@@ -300,7 +300,7 @@ void Buffer::allocateMemory() {
     allocInfo.setMemoryTypeIndex(findMemoryType(memRequirements.memoryTypeBits, properties));
 
     try {
-        memory = device->get().allocateMemory(allocInfo);
+        m_memory = device->get().allocateMemory(allocInfo);
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(),
                             std::string("Failed to allocate buffer memory: ") + e.what(),
@@ -309,7 +309,7 @@ void Buffer::allocateMemory() {
 
     // Bind memory to buffer
     try {
-        buffer.bindMemory(*memory, 0);
+        buffer.bindMemory(*m_memory, 0);
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(),
                             std::string("Failed to bind buffer memory: ") + e.what(),

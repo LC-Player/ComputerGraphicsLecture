@@ -28,6 +28,8 @@ target_sources(RayTracing PRIVATE
         src/vulkan/RenderPassManager.cpp
         src/vulkan/PipelineManager.cpp
         src/vulkan/CommandManager.cpp
+        src/vulkan/Texture.cpp
+        src/vulkan/stb_image.cpp
 )
 
 # Main application sources
@@ -39,12 +41,14 @@ target_sources(RayTracing PRIVATE
         src/imgui_impl_vulkan.cpp
         src/imgui_impl_glfw.h
         src/imgui_impl_vulkan.h
+        src/ModelMesh.cpp
+        src/tiny_obj_loader_impl.cpp
 )
 
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
-
+find_package(tinyobjloader CONFIG REQUIRED)
 # Set include directories (include all module directories)
 target_include_directories(RayTracing PRIVATE
         ${CMAKE_SOURCE_DIR}
@@ -62,11 +66,11 @@ target_link_libraries(RayTracing PRIVATE
         glm::glm
         ImGui
         Vulkan::Vulkan
+        tinyobjloader::tinyobjloader
 )
 
-# Enable C++17 for vk::raii
 set_target_properties(RayTracing PROPERTIES
-        CXX_STANDARD 17
+        CXX_STANDARD 20
         CXX_STANDARD_REQUIRED ON
 )
 

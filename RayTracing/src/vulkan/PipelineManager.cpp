@@ -81,7 +81,13 @@ vk::raii::Pipeline& PipelineManager::createPipeline(const std::string& name, con
     colorBlending.setLogicOpEnable(false);
     colorBlending.setAttachments(colorBlendAttachment);
 
-    // Dynamic state
+    vk::PipelineDepthStencilStateCreateInfo depthStencil;
+    depthStencil.setDepthTestEnable(config.depthTestEnable);
+    depthStencil.setDepthWriteEnable(config.depthWriteEnable);
+    depthStencil.setDepthCompareOp(config.depthCompareOp);
+    depthStencil.setDepthBoundsTestEnable(false);
+    depthStencil.setStencilTestEnable(false);
+
     std::array<vk::DynamicState, 2> dynamicStates = {
         vk::DynamicState::eViewport,
         vk::DynamicState::eScissor
@@ -90,7 +96,6 @@ vk::raii::Pipeline& PipelineManager::createPipeline(const std::string& name, con
     vk::PipelineDynamicStateCreateInfo dynamicState;
     dynamicState.setDynamicStates(dynamicStates);
 
-    // Graphics pipeline create info
     vk::GraphicsPipelineCreateInfo pipelineInfo;
     pipelineInfo.setStages(shaderStages);
     pipelineInfo.setPVertexInputState(&vertexInputInfo);
@@ -98,6 +103,7 @@ vk::raii::Pipeline& PipelineManager::createPipeline(const std::string& name, con
     pipelineInfo.setPViewportState(&viewportState);
     pipelineInfo.setPRasterizationState(&rasterizer);
     pipelineInfo.setPMultisampleState(&multisampling);
+    pipelineInfo.setPDepthStencilState(&depthStencil);
     pipelineInfo.setPColorBlendState(&colorBlending);
     pipelineInfo.setPDynamicState(&dynamicState);
     pipelineInfo.setLayout(config.pipelineLayout);
@@ -108,14 +114,13 @@ vk::raii::Pipeline& PipelineManager::createPipeline(const std::string& name, con
     try {
         auto pipelineResult = device.createGraphicsPipelines(nullptr, pipelineInfo);
         auto [it, success] = pipelines.emplace(name, std::move(pipelineResult[0]));
+        LOG_DEBUG("Graphics pipeline '" + name + "' created successfully");
         return it->second;
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(),
                             std::string("Failed to create graphics pipeline: ") + e.what(),
                             __FUNCTION__, __FILE__, __LINE__);
     }
-
-    LOG_DEBUG("Graphics pipeline '" + name + "' created successfully");
 }
 
 vk::raii::Pipeline* PipelineManager::getPipeline(const std::string& name) {

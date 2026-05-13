@@ -14,34 +14,27 @@ namespace RYRayTracing {
  * @brief Pipeline configuration
  */
 struct PipelineConfig {
-    // Shader stages
     vk::ShaderModule vertexShader = nullptr;
     vk::ShaderModule fragmentShader = nullptr;
     std::string vertexEntryPoint = "main";
     std::string fragmentEntryPoint = "main";
 
-    // Vertex input state
     vk::VertexInputBindingDescription vertexBindingDescription = {};
     std::vector<vk::VertexInputBindingDescription> vertexBindingDescriptions;
     std::vector<vk::VertexInputAttributeDescription> vertexAttributeDescriptions;
 
-    // Input assembly
     vk::PrimitiveTopology topology = vk::PrimitiveTopology::eTriangleList;
     bool primitiveRestartEnable = false;
 
-    // Viewport and scissor (dynamic)
     bool dynamicViewportAndScissor = true;
 
-    // Rasterization
     vk::PolygonMode polygonMode = vk::PolygonMode::eFill;
-    vk::CullModeFlags cullMode = vk::CullModeFlagBits::eNone; // TODO: now set to eNone for debugging. set to eBack instead
+    vk::CullModeFlags cullMode = vk::CullModeFlagBits::eNone;
     vk::FrontFace frontFace = vk::FrontFace::eClockwise;
     float lineWidth = 1.0f;
 
-    // Multisampling
     vk::SampleCountFlagBits rasterizationSamples = vk::SampleCountFlagBits::e1;
 
-    // Color blending
     bool blendEnable = false;
     vk::BlendFactor srcColorBlendFactor = vk::BlendFactor::eSrcAlpha;
     vk::BlendFactor dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
@@ -50,10 +43,12 @@ struct PipelineConfig {
     vk::BlendFactor dstAlphaBlendFactor = vk::BlendFactor::eZero;
     vk::BlendOp alphaBlendOp = vk::BlendOp::eAdd;
 
-    // Pipeline layout
+    bool depthTestEnable = false;
+    bool depthWriteEnable = true;
+    vk::CompareOp depthCompareOp = vk::CompareOp::eLess;
+
     vk::PipelineLayout pipelineLayout = nullptr;
 
-    // Render pass
     vk::RenderPass renderPass = nullptr;
     uint32_t subpass = 0;
 };

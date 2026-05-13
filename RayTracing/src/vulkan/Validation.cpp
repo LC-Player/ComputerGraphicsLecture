@@ -60,7 +60,7 @@ vk::DebugUtilsMessengerCreateInfoEXT Validation::getDebugMessengerCreateInfo() {
         vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
         vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
         vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance,
-        debugCallback,
+        reinterpret_cast<vk::PFN_DebugUtilsMessengerCallbackEXT>(debugCallback),
         nullptr
     };
 }

@@ -10,7 +10,8 @@ RenderPassManager::RenderPassManager(vk::raii::Device& device, const RenderPassC
 }
 
 void RenderPassManager::createRenderPass() {
-    // Color attachment description
+    std::vector<vk::AttachmentDescription> attachments;
+
     vk::AttachmentDescription colorAttachment;
     colorAttachment.setFormat(config.colorFormat);
     colorAttachment.setSamples(vk::SampleCountFlagBits::e1);
@@ -20,18 +21,37 @@ void RenderPassManager::createRenderPass() {
     colorAttachment.setStencilStoreOp(vk::AttachmentStoreOp::eDontCare);
     colorAttachment.setInitialLayout(config.initialLayout);
     colorAttachment.setFinalLayout(config.finalLayout);
+    attachments.push_back(colorAttachment);
 
-    // Color attachment reference
     vk::AttachmentReference colorAttachmentRef;
     colorAttachmentRef.setAttachment(0);
     colorAttachmentRef.setLayout(vk::ImageLayout::eColorAttachmentOptimal);
 
-    // Subpass description
+    vk::AttachmentReference depthAttachmentRef;
+    depthAttachmentRef.setAttachment(1);
+    depthAttachmentRef.setLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal);
+
+    bool hasDepth = config.depthFormat != vk::Format::eUndefined;
+    if (hasDepth) {
+        vk::AttachmentDescription depthAttachment;
+        depthAttachment.setFormat(config.depthFormat);
+        depthAttachment.setSamples(vk::SampleCountFlagBits::e1);
+        depthAttachment.setLoadOp(config.clearDepth ? vk::AttachmentLoadOp::eClear : vk::AttachmentLoadOp::eLoad);
+        depthAttachment.setStoreOp(vk::AttachmentStoreOp::eStore);
+        depthAttachment.setStencilLoadOp(vk::AttachmentLoadOp::eDontCare);
+        depthAttachment.setStencilStoreOp(vk::AttachmentStoreOp::eDontCare);
+        depthAttachment.setInitialLayout(vk::ImageLayout::eUndefined);
+        depthAttachment.setFinalLayout(vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        attachments.push_back(depthAttachment);
+    }
+
     vk::SubpassDescription subpass;
     subpass.setPipelineBindPoint(vk::PipelineBindPoint::eGraphics);
     subpass.setColorAttachments(colorAttachmentRef);
+    if (hasDepth) {
+        subpass.setPDepthStencilAttachment(&depthAttachmentRef);
+    }
 
-    // Subpass dependency for synchronization
     vk::SubpassDependency dependency;
     dependency.setSrcSubpass(VK_SUBPASS_EXTERNAL);
     dependency.setDstSubpass(0);
@@ -40,9 +60,8 @@ void RenderPassManager::createRenderPass() {
     dependency.setSrcAccessMask(vk::AccessFlagBits::eColorAttachmentWrite);
     dependency.setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite);
 
-    // Create render pass
     vk::RenderPassCreateInfo createInfo;
-    createInfo.setAttachments(colorAttachment);
+    createInfo.setAttachments(attachments);
     createInfo.setSubpasses(subpass);
     createInfo.setDependencies(dependency);
 
@@ -58,11 +77,14 @@ void RenderPassManager::createRenderPass() {
 
 void RenderPassManager::begin(vk::raii::CommandBuffer& commandBuffer, vk::Framebuffer framebuffer,
                                vk::Rect2D renderArea, const std::vector<vk::ClearValue>& clearValues) {
-    // Set default clear values if not provided
     std::vector<vk::ClearValue> actualClearValues = clearValues;
     if (actualClearValues.empty()) {
-        actualClearValues.resize(1);
-        actualClearValues[0].color = vk::ClearColorValue{0.0f, 0.0f, 0.0f, 1.0f}; // Black background
+        bool hasDepth = config.depthFormat != vk::Format::eUndefined;
+        actualClearValues.resize(hasDepth ? 2 : 1);
+        actualClearValues[0].color = vk::ClearColorValue{0.0f, 0.0f, 0.0f, 1.0f};
+        if (hasDepth) {
+            actualClearValues[1].depthStencil = vk::ClearDepthStencilValue{1.0f, 0};
+        }
     }
 
     vk::RenderPassBeginInfo beginInfo{

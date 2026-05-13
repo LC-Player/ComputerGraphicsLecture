@@ -217,6 +217,7 @@ void Application::createImage(
 
 void Application::createTextureImage() {
     int texWidth, texHeight, texChannels;
+    stbi_set_flip_vertically_on_load(true);
     stbi_uc* pixels = stbi_load("assets/textures/rust_cpp.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
     if (!pixels) throw std::runtime_error("failed to load texture image!");
     const vk::DeviceSize imageSize = texWidth * texHeight * 4;

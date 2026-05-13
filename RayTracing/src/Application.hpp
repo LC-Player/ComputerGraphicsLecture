@@ -6,11 +6,10 @@
 #include <memory>
 #include <array>
 
-#include "type.h"
+#include "Vertex.h"
 #include "Camera.h"
 #include "Transform.h"
 
-// Forward declarations
 namespace RYRayTracing {
     class WindowManager;
     class VulkanInstance;
@@ -21,112 +20,82 @@ namespace RYRayTracing {
     class RenderPassManager;
     class PipelineManager;
     class CommandManager;
+    class Texture;
 }
 
 namespace RYRayTracing {
 
-/**
- * @brief Main application class for rendering a triangle
- *
- * This class creates a window, initializes Vulkan, and renders a simple triangle.
- */
 class Application {
 public:
-    /**
-     * @brief Construct a new Application object
-     */
     Application();
 
-    /**
-     * @brief Destroy the Application object
-     */
     ~Application();
 
-    // Delete copy constructor and assignment operator
     Application(const Application&) = delete;
     Application& operator=(const Application&) = delete;
 
-    /**
-     * @brief Run the application
-     *
-     * This is the main entry point for the application logic.
-     * It initializes all components, runs the main loop, and cleans up.
-     */
     void run();
 
 private:
-    // Vulkan objects
-    std::unique_ptr<VulkanInstance> vulkanInstance;
-    std::unique_ptr<WindowManager> windowManager;
-    std::unique_ptr<VulkanDevice> vulkanDevice;
-    std::unique_ptr<SwapChainManager> swapChainManager;
-    std::unique_ptr<RenderPassManager> renderPassManager;
-    std::unique_ptr<PipelineManager> pipelineManager;
-    std::unique_ptr<CommandManager> commandManager;
+    std::unique_ptr<VulkanInstance> m_vulkanInstance;
+    std::unique_ptr<WindowManager> m_windowManager;
+    std::unique_ptr<VulkanDevice> m_vulkanDevice;
+    std::unique_ptr<SwapChainManager> m_swapChainManager;
+    std::unique_ptr<RenderPassManager> m_renderPassManager;
+    std::unique_ptr<PipelineManager> m_pipelineManager;
+    std::unique_ptr<CommandManager> m_commandManager;
 
-    // Vertex buffer for triangle
-    std::unique_ptr<Buffer> vertexBuffer;
+    std::unique_ptr<Buffer> m_vertexBuffer;
+    std::vector<Vertex> m_vertices;
+    std::vector<uint32_t> m_indices;
 
-    // Index buffer for triangle
-    std::unique_ptr<Buffer> indexBuffer;
+    std::unique_ptr<Buffer> m_indexBuffer;
 
-    // Instance buffers for instanced rendering
-    std::vector<std::unique_ptr<Buffer>> instanceBuffers;
-    std::vector<void*> mappedInstanceData;
+    std::vector<std::unique_ptr<Buffer>> m_uniformBuffers;
+    std::vector<void*> m_mappedUniformData;
 
-    // Uniform buffers for camera data
-    std::vector<std::unique_ptr<Buffer>> uniformBuffers;
-    std::vector<void*> mappedUniformData;
+    std::unique_ptr<Texture> m_texture;
 
-    // Descriptor set layout and pool
-    vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
-    vk::raii::DescriptorPool descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> descriptorSets;
+    vk::raii::DescriptorSetLayout m_descriptorSetLayout = nullptr;
+    vk::raii::DescriptorSetLayout m_textureDescriptorSetLayout = nullptr;
+    vk::raii::DescriptorPool m_descriptorPool = nullptr;
+    std::vector<vk::raii::DescriptorSet> m_descriptorSets;
+    vk::raii::DescriptorSet m_textureDescriptorSet = nullptr;
 
-    // ImGui descriptor pool
-    vk::raii::DescriptorPool imguiPool = nullptr;
+    vk::raii::DescriptorPool m_imguiPool = nullptr;
 
-    // Shaders
-    std::unique_ptr<ShaderModule> vertexShader;
-    std::unique_ptr<ShaderModule> fragmentShader;
+    std::unique_ptr<ShaderModule> m_vertexShader;
+    std::unique_ptr<ShaderModule> m_fragmentShader;
 
-    // Pipeline layout
-    vk::raii::PipelineLayout pipelineLayout = nullptr;
+    vk::raii::PipelineLayout m_pipelineLayout = nullptr;
 
-    // Framebuffers
-    std::vector<vk::raii::Framebuffer> swapChainFramebuffers;
+    std::vector<vk::raii::Framebuffer> m_swapChainFramebuffers;
 
-    // Command buffers
-    std::vector<vk::raii::CommandBuffer> commandBuffers;
+    vk::raii::Image m_depthImage = nullptr;
+    vk::raii::DeviceMemory m_depthImageMemory = nullptr;
+    vk::raii::ImageView m_depthImageView = nullptr;
+    vk::Format m_depthFormat;
 
-    // Sync objects - one set per swapchain image
-    std::vector<vk::raii::Semaphore> imageAvailableSemaphores;
-    std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
-    std::vector<vk::raii::Fence> inFlightFences;
-    std::vector<vk::Fence> imagesInFlight; // Track which fence is used for each swapchain image
+    std::vector<vk::raii::CommandBuffer> m_commandBuffers;
 
-    // Current frame index
-    size_t currentFrame;
+    std::vector<vk::raii::Semaphore> m_imageAvailableSemaphores;
+    std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
+    std::vector<vk::raii::Fence> m_inFlightFences;
+    std::vector<vk::Fence> m_imagesInFlight;
 
-    // Actual number of frames in flight (equals swapchain image count)
-    size_t framesInFlight;
+    size_t m_currentFrame;
 
-    // Window dimensions
-    uint32_t windowWidth;
-    uint32_t windowHeight;
+    size_t m_framesInFlight;
 
-    // Flag to track if window was resized
-    bool framebufferResized;
+    uint32_t m_windowWidth;
+    uint32_t m_windowHeight;
 
-    // Quad instance data
-    std::array<QuadInstanceData, 2> quadInstances;
+    bool m_framebufferResized;
 
-    // Transform data for two quads and camera
-    Transform transform1;
-    Transform transform2;
-    Transform cameraTransform;
-    SceneCamera camera;
+    Transform m_cameraTransform;
+    SceneCamera m_camera;
 
+    void loadModel();
     void initVulkan();
 
     void initImGui();
@@ -159,9 +128,11 @@ private:
 
     void createIndexBuffer();
 
-    void createInstanceBuffers();
-
     void createUniformBuffers();
+
+    void createTexture();
+
+    void createDepthResources();
 
     void createDescriptorSetLayout();
 
@@ -175,11 +146,13 @@ private:
 
     void updateUniformBuffer(size_t currentFrame);
 
-    void updateInstanceBuffer(size_t currentFrame);
+    void updateVertexBuffer(size_t currentFrame);
 
     void drawFrame();
 
     void mainLoop();
+
+    vk::Format findDepthFormat(const std::vector<vk::Format>& candidates) const;
 };
 
 } // namespace RYRayTracing
