@@ -70,39 +70,46 @@ void Application::run() {
     }
 }
 
-void Application::loadModel() {
-    tinyobj::attrib_t attrib;
-    std::vector<tinyobj::shape_t> shapes;
-    std::vector<tinyobj::material_t> materials;
-    std::string warn, err;
-
-    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, "assets/models/viking_room.obj")) {
-        throw std::runtime_error(warn + err);
+void Application::createModels() {
+    // Viking room
+    {
+        Model model;
+        model.name = "Viking Room";
+        model.loadFromObj("assets/models/viking_room.obj");
+        model.transform = Transform{};
+        model.createBuffers(m_vulkanDevice.get());
+        model.createTexture(m_vulkanDevice.get(), "assets/textures/viking_room.png");
+        m_models.push_back(std::move(model));
     }
-    std::unordered_map<Vertex, uint32_t> uniqueVertexToIndexMap;
-    for (const auto& shape : shapes) {
-        for (const auto& index : shape.mesh.indices) {
-            Vertex vertex{};
-            vertex.local = {
-                attrib.vertices[3 * index.vertex_index + 0],
-                attrib.vertices[3 * index.vertex_index + 1],
-                attrib.vertices[3 * index.vertex_index + 2]
-            };
 
-            vertex.texCoord = {
-                attrib.texcoords[2 * index.texcoord_index + 0],
-                attrib.texcoords[2 * index.texcoord_index + 1]
-            };
+    // Bunny
+    {
+        Model model;
+        model.name = "Bunny";
+        model.loadFromObj("assets/models/bunny.obj");
+        model.transform = Transform{
+            .translation = { 0.0f, -2.5f, 0.0f},
+            .rotation = {0.0f, 0.0f, 0.0f},
+            .scale = {1.0f, 1.0f, 1.0f}
+        };
+        model.createBuffers(m_vulkanDevice.get());
+        model.createTexture(m_vulkanDevice.get(), "assets/textures/bunny.png");
+        m_models.push_back(std::move(model));
+    }
 
-            vertex.transform = glm::mat4(1.0f);
-
-            vertex.color = {1.0f, 1.0f, 1.0f, 1.0f};
-            if (!uniqueVertexToIndexMap.contains(vertex)) {
-                uniqueVertexToIndexMap[vertex] = static_cast<uint32_t>(m_vertices.size());
-                m_vertices.push_back(vertex);
-            }
-            m_indices.push_back(uniqueVertexToIndexMap[vertex]);
-        }
+    // Basketball
+    {
+        Model model;
+        model.name = "Basketball";
+        model.loadFromObj("assets/models/sphere.obj");
+        model.transform = Transform{
+            .translation = {0.0f, 2.5f, 0.0f},
+            .rotation = {0.0f, 0.0f, 0.0f},
+            .scale = {1.0f, 1.0f, 1.0f}
+        };
+        model.createBuffers(m_vulkanDevice.get());
+        model.createTexture(m_vulkanDevice.get(), "assets/textures/basketball.png");
+        m_models.push_back(std::move(model));
     }
 }
 
@@ -135,11 +142,8 @@ void Application::initVulkan() {
     createDepthResources();
     createFramebuffers();
     createCommandPool();
-    loadModel();
-    createVertexBuffer();
-    createIndexBuffer();
+    createModels();
     createUniformBuffers();
-    createTexture();
     createDescriptorPool();
     createDescriptorSets();
     createCommandBuffers();
@@ -199,7 +203,7 @@ void Application::initImGui() {
 void Application::initComponents() {
     m_camera.SetAspectRatio(static_cast<float>(m_windowWidth) / m_windowHeight);
     m_camera.SetPerspective(glm::radians(45.0f), 1, 100);
-    m_cameraTransform.translation = {1.82, 1.28, 2.32};
+    m_cameraTransform.translation = {4.89, 2.77, 4.778};
     m_cameraTransform.rotation = {0.80, 0.15, 2.05};
 }
 
@@ -223,7 +227,6 @@ void Application::cleanup() {
 
     m_commandBuffers.clear();
     m_descriptorSets.clear();
-    m_textureDescriptorSet = nullptr;
     m_descriptorPool = nullptr;
     m_descriptorSetLayout = nullptr;
     m_textureDescriptorSetLayout = nullptr;
@@ -231,10 +234,8 @@ void Application::cleanup() {
     m_pipelineLayout = nullptr;
     m_fragmentShader.reset();
     m_vertexShader.reset();
-    m_texture.reset();
     m_uniformBuffers.clear();
-    m_vertexBuffer.reset();
-    m_indexBuffer.reset();
+    m_models.clear();
     m_commandManager.reset();
     m_pipelineManager.reset();
     m_renderPassManager.reset();
@@ -411,34 +412,12 @@ void Application::createCommandPool() {
     LOG_INFO("Command pool created");
 }
 
-void Application::createVertexBuffer() {
-    LOG_INFO("Creating vertex buffer...");
 
-    vk::DeviceSize bufferSize = m_vertices.size() * sizeof(Vertex);
-
-    m_framesInFlight = m_swapChainManager->getImageCount();
-
-    m_vertexBuffer = std::make_unique<Buffer>(Buffer::createVertexBuffer(
-        m_vulkanDevice.get(), m_vertices.data(), m_vertices.size() * sizeof(Vertex)
-        ));
-
-    LOG_INFO("Vertex buffer created");
-}
-
-void Application::createIndexBuffer() {
-    LOG_INFO("Creating index buffer...");
-
-    m_indexBuffer = std::make_unique<Buffer>(
-        Buffer::createIndexBuffer(
-            m_vulkanDevice.get(), m_indices.data(),
-            sizeof(uint32_t) * m_indices.size())
-            );
-
-    LOG_INFO("Index buffer created");
-}
 
 void Application::createUniformBuffers() {
     LOG_INFO("Creating uniform buffers...");
+
+    m_framesInFlight = m_swapChainManager->getImageCount();
 
     constexpr vk::DeviceSize bufferSize = sizeof(CameraData);
 
@@ -459,16 +438,6 @@ void Application::createUniformBuffers() {
     LOG_INFO("Uniform buffers created");
 }
 
-void Application::createTexture() {
-    LOG_INFO("Creating texture...");
-
-    TextureConfig config;
-    config.filepath = "assets/textures/viking_room.png";
-
-    m_texture = std::make_unique<Texture>(m_vulkanDevice.get(), config);
-
-    LOG_INFO("Texture created");
-}
 
 void Application::createDepthResources() {
     LOG_INFO("Creating depth resources...");
@@ -532,15 +501,17 @@ void Application::createDepthResources() {
 void Application::createDescriptorPool() {
     LOG_INFO("Creating descriptor pool...");
 
+    uint32_t modelCount = static_cast<uint32_t>(m_models.size());
+
     std::array<vk::DescriptorPoolSize, 2> poolSizes;
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
     poolSizes[0].descriptorCount = static_cast<uint32_t>(m_framesInFlight);
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = 1;
+    poolSizes[1].descriptorCount = modelCount;
 
     vk::DescriptorPoolCreateInfo poolInfo;
     poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = static_cast<uint32_t>(m_framesInFlight) + 1;
+    poolInfo.maxSets = static_cast<uint32_t>(m_framesInFlight) + modelCount;
     poolInfo.setPoolSizes(poolSizes);
     m_descriptorPool = m_vulkanDevice->get().createDescriptorPool(poolInfo);
 
@@ -572,20 +543,9 @@ void Application::createDescriptorSets() {
         m_vulkanDevice->get().updateDescriptorSets(descriptorWrite, nullptr);
     }
 
-    allocInfo.setSetLayouts(*m_textureDescriptorSetLayout);
-    std::vector<vk::raii::DescriptorSet> textureSets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
-    m_textureDescriptorSet = std::move(textureSets[0]);
-
-    vk::DescriptorImageInfo imageInfo = m_texture->getDescriptorInfo();
-
-    vk::WriteDescriptorSet textureWrite;
-    textureWrite.dstSet = m_textureDescriptorSet;
-    textureWrite.dstBinding = 0;
-    textureWrite.dstArrayElement = 0;
-    textureWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-    textureWrite.setImageInfo(imageInfo);
-
-    m_vulkanDevice->get().updateDescriptorSets(textureWrite, nullptr);
+    for (auto& model : m_models) {
+        model.createTextureDescriptorSet(m_vulkanDevice->get(), m_descriptorPool, m_textureDescriptorSetLayout);
+    }
 
     LOG_INFO("Descriptor sets created");
 }
@@ -627,12 +587,12 @@ void Application::updateUniformBuffer(size_t currentFrame) {
     memcpy(m_mappedUniformData[currentFrame], &data, sizeof(data));
 }
 
-void Application::updateVertexBuffer(size_t currentFrame) {
-}
 
 void Application::cleanupSwapChain() {
     m_descriptorSets.clear();
-    m_textureDescriptorSet = nullptr;
+    for (auto& model : m_models) {
+        model.resetTextureDescriptorSet();
+    }
     m_descriptorPool = nullptr;
     m_commandBuffers.clear();
     m_pipelineLayout = nullptr;
@@ -726,7 +686,6 @@ void Application::drawFrame() {
     }
     m_imagesInFlight[imageIndex] = *m_inFlightFences[m_currentFrame];
 
-    updateVertexBuffer(m_currentFrame);
     updateUniformBuffer(m_currentFrame);
 
     m_commandBuffers[m_currentFrame].reset();
@@ -762,25 +721,27 @@ void Application::drawFrame() {
 
     m_commandBuffers[m_currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *m_pipelineManager->getPipeline("main"));
 
-    vk::Buffer vertexBuffers[] = {*m_vertexBuffer->get()};
-    vk::DeviceSize offsets[] = {0};
-    m_commandBuffers[m_currentFrame].bindVertexBuffers(0, vertexBuffers, offsets);
+    for (auto& model : m_models) {
+        vk::Buffer vertexBuffers[] = {*model.getVertexBuffer()->get()};
+        vk::DeviceSize offsets[] = {0};
+        m_commandBuffers[m_currentFrame].bindVertexBuffers(0, vertexBuffers, offsets);
 
-    m_commandBuffers[m_currentFrame].bindIndexBuffer(*m_indexBuffer->get(), 0, vk::IndexType::eUint32);
+        m_commandBuffers[m_currentFrame].bindIndexBuffer(*model.getIndexBuffer()->get(), 0, vk::IndexType::eUint32);
 
-    std::array<vk::DescriptorSet, 2> descriptorSetsToBind = {
-        *m_descriptorSets[m_currentFrame],
-        *m_textureDescriptorSet
-    };
-    m_commandBuffers[m_currentFrame].bindDescriptorSets(
-        vk::PipelineBindPoint::eGraphics,
-        *m_pipelineLayout,
-        0,
-        descriptorSetsToBind,
-        nullptr
-    );
+        std::array<vk::DescriptorSet, 2> descriptorSetsToBind = {
+            *m_descriptorSets[m_currentFrame],
+            *model.getTextureDescriptorSet()
+        };
+        m_commandBuffers[m_currentFrame].bindDescriptorSets(
+            vk::PipelineBindPoint::eGraphics,
+            *m_pipelineLayout,
+            0,
+            descriptorSetsToBind,
+            nullptr
+        );
 
-    m_commandBuffers[m_currentFrame].drawIndexed(static_cast<uint32_t>(m_indices.size()), 1, 0, 0, 0);
+        m_commandBuffers[m_currentFrame].drawIndexed(static_cast<uint32_t>(model.indices.size()), 1, 0, 0, 0);
+    }
 
     ImGui_ImplVulkan_RenderDrawData(
         ImGui::GetDrawData(),

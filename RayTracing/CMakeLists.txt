@@ -36,12 +36,12 @@ target_sources(RayTracing PRIVATE
 target_sources(RayTracing PRIVATE
         src/main.cpp
         src/Application.cpp
+        src/Model.cpp
         src/Camera.cpp
         src/imgui_impl_glfw.cpp
         src/imgui_impl_vulkan.cpp
         src/imgui_impl_glfw.h
         src/imgui_impl_vulkan.h
-        src/ModelMesh.cpp
         src/tiny_obj_loader_impl.cpp
 )
 

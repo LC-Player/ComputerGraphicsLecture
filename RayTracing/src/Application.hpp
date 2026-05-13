@@ -9,6 +9,7 @@
 #include "Vertex.h"
 #include "Camera.h"
 #include "Transform.h"
+#include "Model.h"
 
 namespace RYRayTracing {
     class WindowManager;
@@ -45,22 +46,15 @@ private:
     std::unique_ptr<PipelineManager> m_pipelineManager;
     std::unique_ptr<CommandManager> m_commandManager;
 
-    std::unique_ptr<Buffer> m_vertexBuffer;
-    std::vector<Vertex> m_vertices;
-    std::vector<uint32_t> m_indices;
-
-    std::unique_ptr<Buffer> m_indexBuffer;
+    std::vector<Model> m_models;
 
     std::vector<std::unique_ptr<Buffer>> m_uniformBuffers;
     std::vector<void*> m_mappedUniformData;
-
-    std::unique_ptr<Texture> m_texture;
 
     vk::raii::DescriptorSetLayout m_descriptorSetLayout = nullptr;
     vk::raii::DescriptorSetLayout m_textureDescriptorSetLayout = nullptr;
     vk::raii::DescriptorPool m_descriptorPool = nullptr;
     std::vector<vk::raii::DescriptorSet> m_descriptorSets;
-    vk::raii::DescriptorSet m_textureDescriptorSet = nullptr;
 
     vk::raii::DescriptorPool m_imguiPool = nullptr;
 
@@ -95,7 +89,7 @@ private:
     Transform m_cameraTransform;
     SceneCamera m_camera;
 
-    void loadModel();
+    void createModels();
     void initVulkan();
 
     void initImGui();
@@ -124,13 +118,7 @@ private:
 
     void createCommandPool();
 
-    void createVertexBuffer();
-
-    void createIndexBuffer();
-
     void createUniformBuffers();
-
-    void createTexture();
 
     void createDepthResources();
 
@@ -145,8 +133,6 @@ private:
     void createSyncObjects();
 
     void updateUniformBuffer(size_t currentFrame);
-
-    void updateVertexBuffer(size_t currentFrame);
 
     void drawFrame();
 
