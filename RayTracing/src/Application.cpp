@@ -147,7 +147,7 @@ void Application::initVulkan() {
     WindowConfig windowConfig;
     windowConfig.width = m_windowWidth;
     windowConfig.height = m_windowHeight;
-    windowConfig.title = "Vulkan Quad Rendering";
+    windowConfig.title = "Lab 3 Blinn-Phong Rendering";
     windowConfig.resizable = true;
 
     m_windowManager = std::make_unique<WindowManager>(windowConfig);
@@ -232,6 +232,32 @@ void Application::initComponents() {
     m_camera.SetPerspective(glm::radians(45.0f), 1, 100);
     m_cameraTransform.translation = {4.89, 2.77, 4.778};
     m_cameraTransform.rotation = {0.80, 0.15, 2.05};
+
+    m_lights.pointLight1.pos = {4.0f, 4.0f, 4.0f};
+    m_lights.pointLight1.color = {1.0f, 1.0f, 1.0f};
+    m_lights.pointLight1.intensity = 20.0f;
+    m_lights.pointLight1.maxDistance = 30.0f;
+
+    m_lights.pointLight2.pos = {-4.0f, 4.0f, 4.0f};
+    m_lights.pointLight2.color = {1.0f, 1.0f, 1.0f};
+    m_lights.pointLight2.intensity = 20.0f;
+    m_lights.pointLight2.maxDistance = 30.0f;
+
+    m_lights.spotLight.pos = {3.0f, 2.0f, 2.0f};
+    m_lights.spotLight.dir = glm::normalize(glm::vec3{-1.0f, -1.0f, -1.0f});
+    m_lights.spotLight.color = {0.0f, 1.0f, 0.0f};
+    m_lights.spotLight.cosineInclinationAngle = cos(glm::radians(15.5f));
+    m_lights.spotLight.cosineExclusivityAngle = cos(glm::radians(32.5f));
+    m_lights.spotLight.intensity = 20.0f;
+    m_lights.spotLight.maxDistance = 15.0f;
+
+    m_lights.directionalLight.dir = glm::normalize(glm::vec3{-0.5f, -1.0f, -0.5f});
+    m_lights.directionalLight.color = {1.0f, 0.95f, 0.9f};
+    m_lights.directionalLight.intensity = 0.5f;
+
+    m_lights.ambientArgs = {0.1f, 0.1f, 0.1f, 0.1f};
+    m_lights.diffuseStrength = 0.5f;
+    m_lights.specularStrength = 1.0f;
 }
 
 void Application::cleanup() {
@@ -279,7 +305,7 @@ void Application::createInstance() {
     LOG_INFO("Creating Vulkan instance...");
 
     InstanceConfig config;
-    config.applicationName = "Vulkan Quad Rendering";
+    config.applicationName = "Lab 3 Blinn-Phong Rendering";
     config.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     config.engineName = "No Engine";
     config.engineVersion = VK_MAKE_VERSION(1, 0, 0);
@@ -650,21 +676,11 @@ void Application::cleanupSwapChain() {
     for (auto& model : m_models) {
         model.resetTextureDescriptorSet();
     }
-    m_descriptorPool = nullptr;
-    m_commandBuffers.clear();
-    m_pipelineLayout = nullptr;
-    m_vertexShader.reset();
-    m_fragmentShader.reset();
-    m_pipelineManager.reset();
     m_swapChainFramebuffers.clear();
     m_depthImageView = nullptr;
     m_depthImage = nullptr;
     m_depthImageMemory = nullptr;
     m_renderPassManager.reset();
-    m_uboDescriptorSetLayout = nullptr;
-    m_textureDescriptorSetLayout = nullptr;
-    m_cameraUniformBuffers.clear();
-    m_mappedCameraUniformData.clear();
 }
 
 void Application::cleanupSyncObjects() {
@@ -675,6 +691,10 @@ void Application::cleanupSyncObjects() {
 }
 
 void Application::recreateSwapChain() {
+    if (m_windowWidth == 0 || m_windowHeight == 0) {
+        return;
+    }
+
     m_vulkanDevice->waitIdle();
 
     cleanupSwapChain();
@@ -702,7 +722,7 @@ void Application::drawFrame() {
 
     ImGui::Begin("Transform");
 
-    ImGui::SetWindowFontScale(2);
+    ImGui::SetWindowFontScale(1.4f);
 
     ImGui::Text("Camera");
     ImGui::Separator();
@@ -732,6 +752,51 @@ void Application::drawFrame() {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Text("Light");
+    ImGui::Separator();
+
+    if (ImGui::CollapsingHeader("Point Light 1")) {
+        ImGui::DragFloat3("Position##pl1", glm::value_ptr(m_lights.pointLight1.pos), 0.1f);
+        ImGui::ColorEdit3("Color##pl1", glm::value_ptr(m_lights.pointLight1.color));
+        ImGui::DragFloat("Intensity##pl1", &m_lights.pointLight1.intensity, 0.1f, 0.0f, 100.0f);
+        ImGui::DragFloat("Max Distance##pl1", &m_lights.pointLight1.maxDistance, 0.1f, 0.0f, 100.0f);
+    }
+
+    if (ImGui::CollapsingHeader("Point Light 2")) {
+        ImGui::DragFloat3("Position##pl2", glm::value_ptr(m_lights.pointLight2.pos), 0.1f);
+        ImGui::ColorEdit3("Color##pl2", glm::value_ptr(m_lights.pointLight2.color));
+        ImGui::DragFloat("Intensity##pl2", &m_lights.pointLight2.intensity, 0.1f, 0.0f, 100.0f);
+        ImGui::DragFloat("Max Distance##pl2", &m_lights.pointLight2.maxDistance, 0.1f, 0.0f, 100.0f);
+    }
+
+    if (ImGui::CollapsingHeader("Spot Light")) {
+        ImGui::DragFloat3("Position##sl", glm::value_ptr(m_lights.spotLight.pos), 0.1f);
+        ImGui::DragFloat3("Direction##sl", glm::value_ptr(m_lights.spotLight.dir), 0.01f);
+        m_lights.spotLight.dir = glm::normalize(m_lights.spotLight.dir);
+        ImGui::ColorEdit3("Color##sl", glm::value_ptr(m_lights.spotLight.color));
+        float innerDeg = glm::degrees(acos(m_lights.spotLight.cosineInclinationAngle));
+        if (ImGui::DragFloat("Inner Angle##sl", &innerDeg, 0.1f, 0.1f, 90.0f))
+            m_lights.spotLight.cosineInclinationAngle = cos(glm::radians(innerDeg));
+        float outerDeg = glm::degrees(acos(m_lights.spotLight.cosineExclusivityAngle));
+        if (ImGui::DragFloat("Outer Angle##sl", &outerDeg, 0.1f, 0.1f, 90.0f))
+            m_lights.spotLight.cosineExclusivityAngle = cos(glm::radians(outerDeg));
+        ImGui::DragFloat("Intensity##sl", &m_lights.spotLight.intensity, 0.1f, 0.0f, 100.0f);
+        ImGui::DragFloat("Max Distance##sl", &m_lights.spotLight.maxDistance, 0.1f, 0.0f, 100.0f);
+    }
+
+    if (ImGui::CollapsingHeader("Directional Light")) {
+        ImGui::DragFloat3("Direction##dl", glm::value_ptr(m_lights.directionalLight.dir), 0.01f);
+        m_lights.directionalLight.dir = glm::normalize(m_lights.directionalLight.dir);
+        ImGui::ColorEdit3("Color##dl", glm::value_ptr(m_lights.directionalLight.color));
+        ImGui::DragFloat("Intensity##dl", &m_lights.directionalLight.intensity, 0.01f, 0.0f, 10.0f);
+    }
+
+    if (ImGui::CollapsingHeader("Ambient")) {
+        ImGui::ColorEdit3("Color##amb", glm::value_ptr(m_lights.ambientArgs));
+        ImGui::DragFloat("Strength##amb", &m_lights.ambientArgs.w, 0.01f, 0.0f, 1.0f);
+    }
+
+    ImGui::DragFloat("Diffuse Strength", &m_lights.diffuseStrength, 0.01f, 0.0f, 2.0f);
+    ImGui::DragFloat("Specular Strength", &m_lights.specularStrength, 0.01f, 0.0f, 2.0f);
 
     ImGui::End();
 
