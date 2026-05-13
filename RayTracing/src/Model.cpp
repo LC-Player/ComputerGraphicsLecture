@@ -34,8 +34,15 @@ void Model::loadFromObj(const std::string& objPath) {
                 1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
             };
 
-            vertex.transform = glm::mat4(1.0f);
-            vertex.color = {1.0f, 1.0f, 1.0f, 1.0f};
+            if (index.normal_index >= 0) {
+                vertex.normal = {
+                    attrib.normals[3 * index.normal_index + 0],
+                    attrib.normals[3 * index.normal_index + 1],
+                    attrib.normals[3 * index.normal_index + 2]
+            };
+            } else {
+                vertex.normal = {0.0f, 0.0f, 0.0f};
+            }
 
             if (!uniqueVertexToIndexMap.contains(vertex)) {
                 uniqueVertexToIndexMap[vertex] = static_cast<uint32_t>(sourceVertices.size());
@@ -47,15 +54,9 @@ void Model::loadFromObj(const std::string& objPath) {
 }
 
 void Model::createBuffers(VulkanDevice* device) {
-    std::vector<Vertex> transformedVertices = sourceVertices;
-    glm::mat4 xform = transform();
-    for (auto& v : transformedVertices) {
-        v.transform = xform;
-    }
-
     m_vertexBuffer = std::make_unique<Buffer>(
-        Buffer::createVertexBuffer(device, transformedVertices.data(),
-            transformedVertices.size() * sizeof(Vertex)));
+        Buffer::createVertexBuffer(device, sourceVertices.data(),
+            sourceVertices.size() * sizeof(Vertex)));
 
     m_indexBuffer = std::make_unique<Buffer>(
         Buffer::createIndexBuffer(device, indices.data(),

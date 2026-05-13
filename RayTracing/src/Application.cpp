@@ -11,7 +11,6 @@
 #include "vulkan/RenderPassManager.hpp"
 #include "vulkan/PipelineManager.hpp"
 #include "vulkan/CommandManager.hpp"
-#include "vulkan/Texture.hpp"
 
 #include "imgui_impl_vulkan.h"
 #include "imgui_impl_glfw.h"
@@ -26,17 +25,19 @@
 #include <thread>
 #include <chrono>
 #include <cstring>
-#include <unordered_map>
+
+#include "imgui_internal.h"
+#include "Light.h"
 
 namespace RYRayTracing {
 
 Application::Application()
-    : m_currentFrame(0)
-    , m_framesInFlight(0)
-    , m_windowWidth(1440)
-    , m_windowHeight(1080)
-    , m_framebufferResized(false) {
-
+      : m_depthFormat(vk::Format::eUndefined)
+      , m_currentFrame(0)
+      , m_framesInFlight(0)
+      , m_windowWidth(1920)
+      , m_windowHeight(1080)
+      , m_framebufferResized(false) {
     Logger::init("raytracing.log");
     LOG_INFO("=== Vulkan Quad Rendering Application ===");
 }
@@ -71,12 +72,14 @@ void Application::run() {
 }
 
 void Application::createModels() {
+    m_models.reserve(3);
+    m_instances.reserve(3);
+
     // Viking room
     {
         Model model;
         model.name = "Viking Room";
         model.loadFromObj("assets/models/viking_room.obj");
-        model.transform = Transform{};
         model.createBuffers(m_vulkanDevice.get());
         model.createTexture(m_vulkanDevice.get(), "assets/textures/viking_room.png");
         m_models.push_back(std::move(model));
@@ -87,11 +90,6 @@ void Application::createModels() {
         Model model;
         model.name = "Bunny";
         model.loadFromObj("assets/models/bunny.obj");
-        model.transform = Transform{
-            .translation = { 0.0f, -2.5f, 0.0f},
-            .rotation = {0.0f, 0.0f, 0.0f},
-            .scale = {1.0f, 1.0f, 1.0f}
-        };
         model.createBuffers(m_vulkanDevice.get());
         model.createTexture(m_vulkanDevice.get(), "assets/textures/bunny.png");
         m_models.push_back(std::move(model));
@@ -102,14 +100,44 @@ void Application::createModels() {
         Model model;
         model.name = "Basketball";
         model.loadFromObj("assets/models/sphere.obj");
-        model.transform = Transform{
-            .translation = {0.0f, 2.5f, 0.0f},
-            .rotation = {0.0f, 0.0f, 0.0f},
-            .scale = {1.0f, 1.0f, 1.0f}
-        };
         model.createBuffers(m_vulkanDevice.get());
         model.createTexture(m_vulkanDevice.get(), "assets/textures/basketball.png");
         m_models.push_back(std::move(model));
+    }
+
+    // Create instances referencing the models
+    {
+        Instance instance;
+        instance.name = "Viking Room";
+        instance.model = &m_models[0];
+        instance.transform = Transform{};
+        instance.transform.rotation = glm::vec3(0.0f);
+        instance.transform.translation = { 0.96, 0.16, -0.12 };
+        instance.transform.scale = glm::vec3(1.0f);
+        instance.createBuffer(m_vulkanDevice.get());
+        m_instances.push_back(std::move(instance));
+    }
+    {
+        Instance instance;
+        instance.name = "Bunny";
+        instance.model = &m_models[1];
+        instance.transform = Transform{};
+        instance.transform.rotation = { 1.63, 0.49, -3.32 };
+        instance.transform.translation = { 2.35, -2.16, 0.00 };
+        instance.transform.scale = glm::vec3(1.0f);
+        instance.createBuffer(m_vulkanDevice.get());
+        m_instances.push_back(std::move(instance));
+    }
+    {
+        Instance instance;
+        instance.name = "Basketball";
+        instance.model = &m_models[2];
+        instance.transform = Transform{};
+        instance.transform.rotation = glm::vec3(0.0f);
+        instance.transform.translation = { 0, 2.5, 0 };
+        instance.transform.scale = glm::vec3(0.8f);
+        instance.createBuffer(m_vulkanDevice.get());
+        m_instances.push_back(std::move(instance));
     }
 }
 
@@ -166,7 +194,6 @@ void Application::initImGui() {
     m_imguiPool = m_vulkanDevice->get().createDescriptorPool(pool_info);
 
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
 
     ImGui_ImplGlfw_InitForVulkan(m_windowManager->getHandle(), true);
 
@@ -221,20 +248,21 @@ void Application::cleanup() {
     cleanupSwapChain();
     cleanupSyncObjects();
 
-    for (auto& ptr : m_mappedUniformData) {
-    }
-    m_mappedUniformData.clear();
+    m_mappedCameraUniformData.clear();
+    m_mappedLightUniformData.clear();
 
     m_commandBuffers.clear();
     m_descriptorSets.clear();
     m_descriptorPool = nullptr;
-    m_descriptorSetLayout = nullptr;
+    m_uboDescriptorSetLayout = nullptr;
     m_textureDescriptorSetLayout = nullptr;
     m_imguiPool = nullptr;
     m_pipelineLayout = nullptr;
     m_fragmentShader.reset();
     m_vertexShader.reset();
-    m_uniformBuffers.clear();
+    m_cameraUniformBuffers.clear();
+    m_lightUniformBuffers.clear();
+    m_instances.clear();
     m_models.clear();
     m_commandManager.reset();
     m_pipelineManager.reset();
@@ -302,25 +330,36 @@ void Application::createRenderPass() {
 void Application::createDescriptorSetLayout() {
     LOG_INFO("Creating descriptor set layout...");
 
-    vk::DescriptorSetLayoutBinding uboLayoutBinding;
-    uboLayoutBinding.binding = 0;
-    uboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-    uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+    {
+        std::array<vk::DescriptorSetLayoutBinding, 2> layoutBinding;
+        vk::DescriptorSetLayoutBinding& cameraUboLayoutBinding = layoutBinding[0];
+        cameraUboLayoutBinding.binding = 0;
+        cameraUboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+        cameraUboLayoutBinding.descriptorCount = 1;
+        cameraUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
 
-    vk::DescriptorSetLayoutCreateInfo layoutInfo;
-    layoutInfo.setBindings(uboLayoutBinding);
-    m_descriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
+        vk::DescriptorSetLayoutBinding& lightUboLayoutBinding = layoutBinding[1];
+        lightUboLayoutBinding.binding = 1;
+        lightUboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+        lightUboLayoutBinding.descriptorCount = 1;
+        lightUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
 
-    vk::DescriptorSetLayoutBinding samplerLayoutBinding;
-    samplerLayoutBinding.binding = 0;
-    samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-    samplerLayoutBinding.descriptorCount = 1;
-    samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+        vk::DescriptorSetLayoutCreateInfo layoutInfo;
+        layoutInfo.setBindings(layoutBinding);
+        m_uboDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
+    }
 
-    vk::DescriptorSetLayoutCreateInfo textureLayoutInfo;
-    textureLayoutInfo.setBindings(samplerLayoutBinding);
-    m_textureDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(textureLayoutInfo);
+    {
+        vk::DescriptorSetLayoutBinding samplerLayoutBinding;
+        samplerLayoutBinding.binding = 0;
+        samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        samplerLayoutBinding.descriptorCount = 1;
+        samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+        vk::DescriptorSetLayoutCreateInfo textureLayoutInfo;
+        textureLayoutInfo.setBindings(samplerLayoutBinding);
+        m_textureDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(textureLayoutInfo);
+    }
 
     LOG_INFO("Descriptor set layout created");
 }
@@ -340,7 +379,7 @@ void Application::createGraphicsPipeline() {
 
         LOG_INFO("Shaders loaded successfully");
 
-        std::array<vk::DescriptorSetLayout, 2> setLayouts = {*m_descriptorSetLayout, *m_textureDescriptorSetLayout};
+        std::array setLayouts = {*m_uboDescriptorSetLayout, *m_textureDescriptorSetLayout};
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.setSetLayouts(setLayouts);
 
@@ -359,11 +398,16 @@ void Application::createGraphicsPipeline() {
         pipelineConfig.blendEnable = true;
         pipelineConfig.depthTestEnable = true;
 
-        pipelineConfig.vertexBindingDescriptions = {getVertexBindingDescription()};
+        pipelineConfig.vertexBindingDescriptions = {getVertexBindingDescription(), getInstanceBindingDescription()};
 
-        auto attributeDescriptions = getVertexAttributeDescriptions();
+        auto vertAttribs = getVertexAttributeDescriptions();
+        auto instAttribs = getInstanceAttributeDescriptions();
+        pipelineConfig.vertexAttributeDescriptions.reserve(vertAttribs.size() + instAttribs.size());
         pipelineConfig.vertexAttributeDescriptions.assign(
-            attributeDescriptions.begin(), attributeDescriptions.end());
+            vertAttribs.begin(), vertAttribs.end());
+        pipelineConfig.vertexAttributeDescriptions.insert(
+            pipelineConfig.vertexAttributeDescriptions.end(),
+            instAttribs.begin(), instAttribs.end());
 
         m_pipelineManager->createPipeline("main", pipelineConfig);
 
@@ -418,24 +462,23 @@ void Application::createUniformBuffers() {
     LOG_INFO("Creating uniform buffers...");
 
     m_framesInFlight = m_swapChainManager->getImageCount();
+    createUniformBuffersImpl(sizeof(CameraData), m_cameraUniformBuffers, m_mappedCameraUniformData);
+    createUniformBuffersImpl(sizeof(LightInfo), m_lightUniformBuffers, m_mappedLightUniformData);
+    LOG_INFO("Uniform buffers created");
+}
 
-    constexpr vk::DeviceSize bufferSize = sizeof(CameraData);
-
-    m_uniformBuffers.clear();
-    m_mappedUniformData.clear();
-    m_uniformBuffers.reserve(m_framesInFlight);
-    m_mappedUniformData.reserve(m_framesInFlight);
+void Application::createUniformBuffersImpl(vk::DeviceSize bufferSize, std::vector<std::unique_ptr<Buffer>>& bufferOut, std::vector<void*>& mappedDataOut) const {
+    bufferOut.clear();
+    mappedDataOut.clear();
+    bufferOut.reserve(m_framesInFlight);
+    mappedDataOut.reserve(m_framesInFlight);
 
     for (size_t i = 0; i < m_framesInFlight; i++) {
-        m_uniformBuffers.emplace_back(std::make_unique<Buffer>(
-            Buffer::createBuffer(m_vulkanDevice.get(), bufferSize,
-                vk::BufferUsageFlagBits::eUniformBuffer,
-                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
-
-        m_mappedUniformData.push_back(m_uniformBuffers[i]->map(0, bufferSize));
+        bufferOut.emplace_back(std::make_unique<Buffer>(
+            Buffer::createUniformBuffer(m_vulkanDevice.get(), bufferSize)));
+        mappedDataOut.push_back(bufferOut[i]->map(0, bufferSize));
     }
 
-    LOG_INFO("Uniform buffers created");
 }
 
 
@@ -505,7 +548,7 @@ void Application::createDescriptorPool() {
 
     std::array<vk::DescriptorPoolSize, 2> poolSizes;
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(m_framesInFlight);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(m_framesInFlight) * 2; /* one for camera, one for light */
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
     poolSizes[1].descriptorCount = modelCount;
 
@@ -521,26 +564,38 @@ void Application::createDescriptorPool() {
 void Application::createDescriptorSets() {
     LOG_INFO("Creating descriptor sets...");
 
-    std::vector<vk::DescriptorSetLayout> layouts(m_framesInFlight, *m_descriptorSetLayout);
+    std::vector<vk::DescriptorSetLayout> layouts(m_framesInFlight, *m_uboDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo;
     allocInfo.descriptorPool = m_descriptorPool;
     allocInfo.setSetLayouts(layouts);
     m_descriptorSets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
 
     for (size_t i = 0; i < m_framesInFlight; ++i) {
-        vk::DescriptorBufferInfo bufferInfo;
-        bufferInfo.buffer = *m_uniformBuffers[i]->get();
-        bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(CameraData);
+        vk::DescriptorBufferInfo cameraBufferInfo;
+        cameraBufferInfo.buffer = *m_cameraUniformBuffers[i]->get();
+        cameraBufferInfo.offset = 0;
+        cameraBufferInfo.range = sizeof(CameraData);
 
-        vk::WriteDescriptorSet descriptorWrite;
-        descriptorWrite.dstSet = m_descriptorSets[i];
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
-        descriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-        descriptorWrite.setBufferInfo(bufferInfo);
+        vk::DescriptorBufferInfo lightBufferInfo;
+        lightBufferInfo.buffer = *m_lightUniformBuffers[i]->get();
+        lightBufferInfo.offset = 0;
+        lightBufferInfo.range = sizeof(LightInfo);
 
-        m_vulkanDevice->get().updateDescriptorSets(descriptorWrite, nullptr);
+        vk::WriteDescriptorSet cameraDescriptorWrite;
+        cameraDescriptorWrite.dstSet = m_descriptorSets[i];
+        cameraDescriptorWrite.dstBinding = 0;
+        cameraDescriptorWrite.dstArrayElement = 0;
+        cameraDescriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+        cameraDescriptorWrite.setBufferInfo(cameraBufferInfo);
+
+        vk::WriteDescriptorSet lightDescriptorWrite;
+        lightDescriptorWrite.dstSet = m_descriptorSets[i];
+        lightDescriptorWrite.dstBinding = 1;
+        lightDescriptorWrite.dstArrayElement = 0;
+        lightDescriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
+        lightDescriptorWrite.setBufferInfo(lightBufferInfo);
+
+        m_vulkanDevice->get().updateDescriptorSets(std::array{cameraDescriptorWrite, lightDescriptorWrite}, nullptr);
     }
 
     for (auto& model : m_models) {
@@ -583,8 +638,10 @@ void Application::createSyncObjects() {
 }
 
 void Application::updateUniformBuffer(size_t currentFrame) {
-    CameraData data{m_camera.GetViewProj() * glm::inverse(m_cameraTransform())};
-    memcpy(m_mappedUniformData[currentFrame], &data, sizeof(data));
+    CameraData data{m_camera.GetViewProj() * glm::inverse(m_cameraTransform()), glm::vec4(m_cameraTransform.translation, 0)};
+    memcpy(m_mappedCameraUniformData[currentFrame], &data, sizeof(data));
+
+    memcpy(m_mappedLightUniformData[currentFrame], &m_lights, sizeof(LightInfo));
 }
 
 
@@ -604,10 +661,10 @@ void Application::cleanupSwapChain() {
     m_depthImage = nullptr;
     m_depthImageMemory = nullptr;
     m_renderPassManager.reset();
-    m_descriptorSetLayout = nullptr;
+    m_uboDescriptorSetLayout = nullptr;
     m_textureDescriptorSetLayout = nullptr;
-    m_uniformBuffers.clear();
-    m_mappedUniformData.clear();
+    m_cameraUniformBuffers.clear();
+    m_mappedCameraUniformData.clear();
 }
 
 void Application::cleanupSyncObjects() {
@@ -655,6 +712,26 @@ void Application::drawFrame() {
     if (ImGui::DragFloat("FOV", &fov, 0.01f)) {
         m_camera.SetPerspectiveVerticalFOV(glm::radians(fov));
     }
+
+    ImGui::Spacing();
+    ImGui::Text("Instances");
+    ImGui::Separator();
+    for (size_t i = 0; i < m_instances.size(); i++) {
+        auto& instance = m_instances.at(i);
+        auto name = instance.name + std::to_string(i);
+        ImGui::PushID(name.c_str());
+        if (ImGui::CollapsingHeader(name.c_str())) {
+            ImGui::DragFloat3("Translation", glm::value_ptr(instance.transform.translation), 0.01f);
+            ImGui::DragFloat3("Rotation", glm::value_ptr(instance.transform.rotation), 0.01f);
+            ImGui::DragFloat3("Scale", glm::value_ptr(instance.transform.scale), 0.01f);
+            ImGui::ColorEdit4("Color", glm::value_ptr(instance.color));
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Light");
 
     ImGui::End();
 
@@ -721,10 +798,18 @@ void Application::drawFrame() {
 
     m_commandBuffers[m_currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *m_pipelineManager->getPipeline("main"));
 
-    for (auto& model : m_models) {
+    for (auto& instance : m_instances) {
+        instance.updateBuffer();
+
+        auto& model = *instance.model;
+
         vk::Buffer vertexBuffers[] = {*model.getVertexBuffer()->get()};
-        vk::DeviceSize offsets[] = {0};
-        m_commandBuffers[m_currentFrame].bindVertexBuffers(0, vertexBuffers, offsets);
+        vk::DeviceSize vertOffsets[] = {0};
+        m_commandBuffers[m_currentFrame].bindVertexBuffers(0, vertexBuffers, vertOffsets);
+
+        vk::Buffer instanceBuffers[] = {*instance.getBuffer()->get()};
+        vk::DeviceSize instOffsets[] = {0};
+        m_commandBuffers[m_currentFrame].bindVertexBuffers(1, instanceBuffers, instOffsets);
 
         m_commandBuffers[m_currentFrame].bindIndexBuffer(*model.getIndexBuffer()->get(), 0, vk::IndexType::eUint32);
 
@@ -780,7 +865,9 @@ void Application::mainLoop() {
 
         drawFrame();
 
+        // ReSharper disable once CppDFAConstantConditions
         if (m_framebufferResized) {
+            // ReSharper disable once CppDFAUnreachableCode
             recreateSwapChain();
         }
     }

@@ -82,4 +82,5 @@ inline const std::pair<SceneCamera::ProjectionType, const char*> ProjectionTypeM
 
 struct CameraData {
 	glm::mat4 viewProj;
+	glm::vec4 position; // z for padding
 };

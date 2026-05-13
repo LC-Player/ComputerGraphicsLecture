@@ -10,6 +10,8 @@
 #include "Camera.h"
 #include "Transform.h"
 #include "Model.h"
+#include "Instance.h"
+#include "Light.h"
 
 namespace RYRayTracing {
     class WindowManager;
@@ -47,12 +49,16 @@ private:
     std::unique_ptr<CommandManager> m_commandManager;
 
     std::vector<Model> m_models;
+    std::vector<Instance> m_instances;
 
-    std::vector<std::unique_ptr<Buffer>> m_uniformBuffers;
-    std::vector<void*> m_mappedUniformData;
+    std::vector<std::unique_ptr<Buffer>> m_cameraUniformBuffers;
+    std::vector<void*> m_mappedCameraUniformData;
+    std::vector<std::unique_ptr<Buffer>> m_lightUniformBuffers; //
+    std::vector<void*> m_mappedLightUniformData; //
 
-    vk::raii::DescriptorSetLayout m_descriptorSetLayout = nullptr;
+    vk::raii::DescriptorSetLayout m_uboDescriptorSetLayout = nullptr;
     vk::raii::DescriptorSetLayout m_textureDescriptorSetLayout = nullptr;
+
     vk::raii::DescriptorPool m_descriptorPool = nullptr;
     std::vector<vk::raii::DescriptorSet> m_descriptorSets;
 
@@ -88,6 +94,7 @@ private:
 
     Transform m_cameraTransform;
     SceneCamera m_camera;
+    LightInfo m_lights;
 
     void createModels();
     void initVulkan();
@@ -119,6 +126,8 @@ private:
     void createCommandPool();
 
     void createUniformBuffers();
+    void createUniformBuffersImpl(vk::DeviceSize bufferSize, std::vector<std::unique_ptr<Buffer>>& bufferOut,
+                                  std::vector<void*>& mappedDataOut) const;
 
     void createDepthResources();
 

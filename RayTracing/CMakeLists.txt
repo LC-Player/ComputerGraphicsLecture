@@ -37,6 +37,7 @@ target_sources(RayTracing PRIVATE
         src/main.cpp
         src/Application.cpp
         src/Model.cpp
+        src/Instance.cpp
         src/Camera.cpp
         src/imgui_impl_glfw.cpp
         src/imgui_impl_vulkan.cpp

@@ -2,7 +2,9 @@
 #pragma once
 
 #include "Vertex.h"
-#include "Transform.h"
+#include "vulkan/VulkanDevice.hpp"
+#include "vulkan/Buffer.hpp"
+#include "vulkan/Texture.hpp"
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #include <vector>
@@ -11,16 +13,11 @@
 
 namespace RYRayTracing {
 
-class VulkanDevice;
-class Buffer;
-class Texture;
-
 class Model {
 public:
     std::string name;
     std::vector<Vertex> sourceVertices;
     std::vector<uint32_t> indices;
-    Transform transform;
 
     void loadFromObj(const std::string& objPath);
 
