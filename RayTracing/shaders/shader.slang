@@ -3,7 +3,7 @@ struct VSInput {
     [[vk::location(1)]] float2 texCoord : TEXCOORD;
     [[vk::location(2)]] float4x4 transform;
     [[vk::location(6)]] float4 instanceColor : COLOR;
-    [[vk::location(7)]] float3 normal : POSITION;
+    [[vk::location(7)]] float3 normal : NORMAL;
 };
 
 struct VSOutput
@@ -80,33 +80,55 @@ VSOutput vertMain(VSInput input) {
     return output;
 }
 
+float getDistanceAttenuation(float3 position, float3 fragPos, float intensity, float maxDistance) {
+    float lightToPosDistance = distance(position, fragPos); // 光到片元的距离
+    // attenuation: 衰减，intensity：强度
+    // 衰减之后的强度
+    float lightAttenuation = intensity / (1 + lightToPosDistance * lightToPosDistance);
+
+    // 超过最大距离归零
+    if (lightToPosDistance > maxDistance){
+        lightAttenuation = 0.0;
+    }
+    return lightAttenuation;
+}
+
+float3 getDiffuse(float3 norm /* from frag, normalized */ , float3 lightDir /* from frag to light, normalized */ , float diffuseStrength) {
+    float diff = max(dot(norm, lightDir), 0.0); // 夹角
+    return diffuseStrength * diff; // 漫反射强度 * 有多少是有效的
+}
+
+float3 getBlinnPhongSpecular(float3 lightDir /* from frag to light, normalized */ , float3 fragDir /* from frag to camera, normalized */ , float3 norm, float shininess) {
+    float3 halfVector = normalize(lightDir /* normalized */ + fragDir);
+    float diffSpecular = max(0.0, dot(halfVector, norm));
+    float3 specular = pow(diffSpecular, shininess /* fixed constant for homework */ );
+    specular *= lightInfo.specularStrength;
+    return specular;
+}
+
 [shader("fragment")]
 float4 fragMain(VSOutput vertIn) : SV_TARGET {
     float3 fragDir = normalize(vertIn.cameraViewPos.xyz - vertIn.fragPos); // 从片元指向相机
+    float3 norm = normalize(vertIn.normal); // 单位化之后的法线
+
+    // ambient light
     float3 ambient = lightInfo.ambientArgs.w * float3(lightInfo.ambientArgs.x, lightInfo.ambientArgs.y, lightInfo.ambientArgs.z);
 
     // point light 1
     float3 pointResult_1;
     {
-        float lightToPosDistance = distance(lightInfo.pointLight1.position, vertIn.fragPos); // 光到片元的距离
-        // attenuation: 衰减，intensity：强度
-        // 衰减之后的强度
-        float lightAttenuation = lightInfo.pointLight1.intensity / (1 + lightToPosDistance * lightToPosDistance);
+        float lightAttenuation = getDistanceAttenuation(
+            lightInfo.pointLight1.position,
+            vertIn.fragPos,
+            lightInfo.pointLight1.intensity,
+            lightInfo.pointLight1.maxDistance
+        );
 
-        // 超过最大距离归零
-        if (lightToPosDistance > lightInfo.pointLight1.maxDistance){
-            lightAttenuation = 0.0;
-        }
         // diffuse 漫反射 specular 镜面反射
-        float3 norm = normalize(vertIn.normal); // for safe, 单位化之后的法线
         float3 lightDir = normalize(lightInfo.pointLight1.position - vertIn.fragPos); // 从片元指向光源
-        float diff = max(dot(norm, lightDir), 0.0); // 夹角
-        float3 diffuse = lightInfo.diffuseStrength * diff; // 漫反射强度 * 有多少是有效的
 
-        float3 halfVector = normalize(lightDir /* normalized */ + fragDir);
-        float diffSpecular = max(0.0, dot(halfVector, norm));
-        float3 specular = pow(diffSpecular, 64 /* fixed constant for homework */ );
-        specular *= lightInfo.specularStrength;
+        float3 diffuse = getDiffuse(norm, lightDir, lightInfo.diffuseStrength);
+        float3 specular = getBlinnPhongSpecular(lightDir, fragDir, norm, 64);
         
         pointResult_1 = (specular + diffuse)  * lightAttenuation * lightInfo.pointLight1.color; // 距离衰减后的漫反射强度
     }
@@ -114,25 +136,19 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
     // point light 2
     float3 pointResult_2;
     {
-        float lightToPosDistance = distance(lightInfo.pointLight2.position, vertIn.fragPos); // 光到片元的距离
-        // attenuation: 衰减，intensity：强度
-        // 衰减之后的强度
-        float lightAttenuation = lightInfo.pointLight2.intensity / (1 + lightToPosDistance * lightToPosDistance);
+        float lightAttenuation = getDistanceAttenuation(
+            lightInfo.pointLight2.position,
+            vertIn.fragPos,
+            lightInfo.pointLight2.intensity,
+            lightInfo.pointLight2.maxDistance
+        );
 
-        // 超过最大距离归零
-        if (lightToPosDistance > lightInfo.pointLight2.maxDistance) {
-            lightAttenuation = 0.0;
-        }
-        // diffuse 漫反射 specular 镜面反射
-        float3 norm = normalize(vertIn.normal); // for safe, 单位化之后的法线
         float3 lightDir = normalize(lightInfo.pointLight2.position - vertIn.fragPos); // 从片元指向光源
-        float diff = max(dot(norm, lightDir), 0.0);                                   // 夹角
-        float3 diffuse = lightInfo.diffuseStrength * diff; // 漫反射强度 * 有多少是有效的
 
-        float3 halfVector = normalize(lightDir /* normalized */ + fragDir);
-        float diffSpecular = max(0.0, dot(halfVector, norm));
-        float3 specular = pow(diffSpecular, 64 /* fixed constant for homework */ );
-        specular *= lightInfo.specularStrength;
+        // diffuse 漫反射 specular 镜面反射
+        float3 diffuse = getDiffuse(norm, lightDir, lightInfo.diffuseStrength);
+
+        float3 specular = getBlinnPhongSpecular(lightDir, fragDir, norm, 64);
 
         pointResult_2 = (diffuse + specular) * lightAttenuation * lightInfo.pointLight2.color;
     }
@@ -140,30 +156,24 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
     // spot light
     float3 spotResult;
     {
-        float lightToPosDistance = distance(lightInfo.spotLight.position, vertIn.fragPos); // 光到片元的距离
-        // attenuation: 衰减，intensity：强度
-        // 衰减之后的强度
-        float lightAttenuation = lightInfo.spotLight.intensity / (1 + lightToPosDistance * lightToPosDistance);
-    
-        // 超过最大距离归零
-        if (lightToPosDistance > lightInfo.spotLight.maxDistance) {
-            lightAttenuation = 0.0; // 最终值
-        }
-        float3 norm = normalize(vertIn.normal); // for safe, 单位化之后的法线
+        float lightAttenuation = getDistanceAttenuation(
+            lightInfo.spotLight.position,
+            vertIn.fragPos,
+            lightInfo.spotLight.intensity,
+            lightInfo.spotLight.maxDistance
+        );
+
         float3 lightDir = normalize(lightInfo.spotLight.position - vertIn.fragPos); // 从片元指向光源
 
         // 圆锥衰减
         float cosine = dot(-lightDir, lightInfo.spotLight.direction);
         float decay = smoothstep(lightInfo.spotLight.outerAngleCos, lightInfo.spotLight.innerAngleCos, cosine); // 最终值
+        decay = clamp(decay, 0, 1);
 
         // diffuse 漫反射 specular 镜面反射
-        float diff = max(dot(norm, lightDir), 0.0); // 夹角
-        float3 diffuse = lightInfo.diffuseStrength * diff; // 漫反射强度 * 有多少是有效的 // 最终值
+        float3 diffuse = getDiffuse(norm, lightDir, lightInfo.diffuseStrength);
 
-        float3 halfVector = normalize(lightDir /* normalized */ + fragDir);
-        float diffSpecular = max(0.0, dot(halfVector, norm));
-        float3 specular = pow(diffSpecular, 64 /* fixed constant for homework */ );
-        specular *= lightInfo.specularStrength;
+        float3 specular = getBlinnPhongSpecular(lightDir, fragDir, norm, 64);
 
         spotResult = lightAttenuation * decay * (diffuse + specular) * lightInfo.spotLight.color;
     }
@@ -172,15 +182,11 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
     float3 directionalResult;
     {
         // diffuse 漫反射 specular 镜面反射
-        float3 norm = normalize(vertIn.normal); // for safe, 单位化之后的法线
         float3 lightDir = -lightInfo.directionalLight.direction;
-        float diff = max(dot(norm, lightDir), 0.0); // 夹角
-        float3 diffuse = lightInfo.diffuseStrength * diff; // 漫反射强度 * 有多少是有效的 * 颜色
 
-        float3 halfVector = normalize(lightDir /* normalized */ + fragDir);
-        float diffSpecular = max(0.0, dot(halfVector, norm));
-        float3 specular = pow(diffSpecular, 64 /* fixed constant for homework */ );
-        specular *= lightInfo.specularStrength;
+        float3 diffuse = getDiffuse(norm, lightDir, lightInfo.diffuseStrength);
+
+        float3 specular = getBlinnPhongSpecular(lightDir, fragDir, norm, 64);
 
         directionalResult = (specular + diffuse) * lightInfo.directionalLight.intensity * lightInfo.directionalLight.color;
     }

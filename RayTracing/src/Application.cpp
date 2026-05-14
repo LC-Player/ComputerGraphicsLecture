@@ -111,8 +111,8 @@ void Application::createModels() {
         instance.name = "Viking Room";
         instance.model = &m_models[0];
         instance.transform = Transform{};
-        instance.transform.rotation = glm::vec3(0.0f);
-        instance.transform.translation = { 0.96, 0.16, -0.12 };
+        instance.transform.rotation = glm::vec3(0.38, -0.65, -2.18);
+        instance.transform.translation = { 0, 0, 0 };
         instance.transform.scale = glm::vec3(1.0f);
         instance.createBuffer(m_vulkanDevice.get());
         m_instances.push_back(std::move(instance));
@@ -122,8 +122,8 @@ void Application::createModels() {
         instance.name = "Bunny";
         instance.model = &m_models[1];
         instance.transform = Transform{};
-        instance.transform.rotation = { 1.63, 0.49, -3.32 };
-        instance.transform.translation = { 2.35, -2.16, 0.00 };
+        instance.transform.rotation = { 0.0, 0.77, 0.0 };
+        instance.transform.translation = { -2, -0.8, 0.00 };
         instance.transform.scale = glm::vec3(1.0f);
         instance.createBuffer(m_vulkanDevice.get());
         m_instances.push_back(std::move(instance));
@@ -134,8 +134,8 @@ void Application::createModels() {
         instance.model = &m_models[2];
         instance.transform = Transform{};
         instance.transform.rotation = glm::vec3(0.0f);
-        instance.transform.translation = { 0, 2.5, 0 };
-        instance.transform.scale = glm::vec3(0.8f);
+        instance.transform.translation = { 2, 0, 0};
+        instance.transform.scale = glm::vec3(0.85f);
         instance.createBuffer(m_vulkanDevice.get());
         m_instances.push_back(std::move(instance));
     }
@@ -230,8 +230,8 @@ void Application::initImGui() {
 void Application::initComponents() {
     m_camera.SetAspectRatio(static_cast<float>(m_windowWidth) / m_windowHeight);
     m_camera.SetPerspective(glm::radians(45.0f), 1, 100);
-    m_cameraTransform.translation = {4.89, 2.77, 4.778};
-    m_cameraTransform.rotation = {0.80, 0.15, 2.05};
+    m_cameraTransform.translation = { 0, 0, 6 };
+    m_cameraTransform.rotation = { 0, 0, 0 };
 
     m_lights.pointLight1.pos = {4.0f, 4.0f, 4.0f};
     m_lights.pointLight1.color = {1.0f, 1.0f, 1.0f};
