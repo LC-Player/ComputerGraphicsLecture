@@ -92,16 +92,24 @@ float getDistanceAttenuation(float3 position, float3 fragPos, float intensity, f
     }
     return lightAttenuation;
 }
-
-float3 getDiffuse(float3 norm /* from frag, normalized */ , float3 lightDir /* from frag to light, normalized */ , float diffuseStrength) {
-    float diff = max(dot(norm, lightDir), 0.0); // 夹角
-    return diffuseStrength * diff; // 漫反射强度 * 有多少是有效的
+/**
+  * @param norm - from frag, normalized
+  * @param lightDir - from frag to light, normalized
+  */
+float3 getDiffuse(float3 norm, float3 lightDir, float diffuseStrength) {
+    float cosAngle = max(dot(norm, lightDir), 0.0); // 夹角
+    return diffuseStrength * cosAngle; // 漫反射强度 * 有多少是有效的
 }
 
-float3 getBlinnPhongSpecular(float3 lightDir /* from frag to light, normalized */ , float3 fragDir /* from frag to camera, normalized */ , float3 norm, float shininess) {
-    float3 halfVector = normalize(lightDir /* normalized */ + fragDir);
-    float diffSpecular = max(0.0, dot(halfVector, norm));
-    float3 specular = pow(diffSpecular, shininess /* fixed constant for homework */ );
+/**
+  * @param lightDir - from frag to light, normalized
+  * @param fragDir - from frag to camera, normalized
+  * @param norm - from frag, normalized
+  */
+float3 getBlinnPhongSpecular(float3 lightDir, float3 fragDir, float3 norm, float shininess) {
+    float3 halfVector = normalize(lightDir + fragDir);
+    float cosAngle = max(0.0, dot(halfVector, norm));
+    float3 specular = pow(cosAngle, shininess);
     specular *= lightInfo.specularStrength;
     return specular;
 }
@@ -168,7 +176,6 @@ float4 fragMain(VSOutput vertIn) : SV_TARGET {
         // 圆锥衰减
         float cosine = dot(-lightDir, lightInfo.spotLight.direction);
         float decay = smoothstep(lightInfo.spotLight.outerAngleCos, lightInfo.spotLight.innerAngleCos, cosine); // 最终值
-        decay = clamp(decay, 0, 1);
 
         // diffuse 漫反射 specular 镜面反射
         float3 diffuse = getDiffuse(norm, lightDir, lightInfo.diffuseStrength);
