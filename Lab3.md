@@ -225,9 +225,11 @@ The resulting lighting model is quite satisfying.
 
 By dragging parameters in the ImGui panel, it is easy to verify the correctness of the implementation.
 
-Compare the result with the ref:
+Compare the result with the reference implementation:
 
 ![](docs/images/lab3-compare.png)
+
+There is no remarkable difference.
 
 ## Issues I Encountered
 
@@ -305,9 +307,56 @@ However, finding the inverse of a matrix is very expensive. The Slang language d
 
 RayTracing is the work for this lab.
 
+## Explore Vulkan glTF PBR Project
+
+I cloned the its repository and checkout a new branch called `blinn-phong`.
+`Vulkan glTF PBR` is a actually quite simple project. It creates an immutable PBR rendering pipeline with a default PBR model.
+The main logic of the program are integrated in `main.cpp` file.
+
+What I need to do is to add another rendering pipeline using simple blinn-phong lighting, and load two models, most of which is repeated work. So I used AI Agent to help me do that.
+
+```
+这是我的作业要求：Lab3-VulkanBlinnPhongShading
+Blinn-phong的实现部分，我已经在别的文件夹完成了。现在我要考虑Task5.本 Lab 场景中装载两个 Obj 格式物体，Unity
+  等引擎可导入 gltf（glb）文件格式支持基于物理的渲染(Physically-Based Rendering，Unity 内置渲染管线对应为 Standard
+  Shader）。利用AI 工具，如何对 vulkan gltf
+  仓库（https://github.com/SaschaWillems/Vulkan-glTF-PBR）代码进行改造，场景可以同时显示 PBR 材质物体（仓库自带模型
+  damaged helmet）和作业要求的多光源blinn- phong shading 物体。这个可以怎么做？
+
+● Let me explore the pipeline creation and rendering loop in detail to give you a concrete plan.
+
+  Searched for 2 patterns, read 2 files (ctrl+o to expand)
+
+● 现在我有了完整的理解。让我为你梳理 Part 5 的改造方案。
+
+  ---
+  Part 5: 改造 Vulkan-glTF-PBR 同时显示 PBR + Blinn-Phong 物体的方案
+
+  核心思路
+
+  当前项目只有一套 PBR 渲染管线（pbr.vert + material_pbr.frag），使用 set=0..3 共 4 个描述符集。要同时显示 Blinn-Phong
+  物体，需要 增加第二条独立的渲染管线，两套管线在同一个 Render Pass 中共存。
+
+> 开始实现。对于obj文件和贴图，可以使用D:\projects\ComputerGraphicsLecture\RayTracing\assets中的，可以复制过来。此外D:\
+  projects\ComputerGraphicsLecture\RayTracing也有一些可以利用的东西（stbimage等等），如果确有需要，可以复制。
+
+> bunny和basketball的变换方向很奇怪。我将相机转到上面，反而会看到bunny和basketball的下面
+
+● The root cause is clear: I forgot the Vulkan Y-axis flip. The PBR vertex shader (pbr.vert:68) has locPos.y = -locPos.y; but my blinn_phong.vert doesn't. Let me fix it.
+
+  Read 1 file (ctrl+o to expand)
+
+● The vertex shader is missing the Y-axis flip that Vulkan requires. Let me fix it and recompile.
+
+```
+
+The final rendering result is shown as follow
+
+![](docs/images/vk-pbr-bp.png)
+
 -------
 
-## AI Agent Usage
+## Other AI Agent Use Case
 
 **用户：**
 
@@ -447,5 +496,6 @@ What's Missing for the Lab
 1. 抽象加载viking room模型到一个类型，这样，我们可以轻松添加其他模型
 2. 抽象完成之后，加载bunny模型（bunny.obj, bunny.png) 和basketball(sphere.obj, basketball.png) 模型
 3. 调整viking room和bunny和basketball的transform，使其排列开不要相撞，方便查看。
+
 **助手：**
 ...

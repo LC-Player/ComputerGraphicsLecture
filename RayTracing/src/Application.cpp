@@ -177,7 +177,7 @@ void Application::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    LOG_INFO("Full rendering pipeline initialized - quads should be displayed");
+    LOG_INFO("Full rendering pipeline initialized");
 }
 
 void Application::initImGui() {
@@ -405,7 +405,7 @@ void Application::createGraphicsPipeline() {
 
         LOG_INFO("Shaders loaded successfully");
 
-        std::array setLayouts = {*m_uboDescriptorSetLayout, *m_textureDescriptorSetLayout};
+        std::array<vk::DescriptorSetLayout, 2> setLayouts = {*m_uboDescriptorSetLayout, *m_textureDescriptorSetLayout};
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.setSetLayouts(setLayouts);
 
@@ -621,7 +621,7 @@ void Application::createDescriptorSets() {
         lightDescriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
         lightDescriptorWrite.setBufferInfo(lightBufferInfo);
 
-        m_vulkanDevice->get().updateDescriptorSets(std::array{cameraDescriptorWrite, lightDescriptorWrite}, nullptr);
+        m_vulkanDevice->get().updateDescriptorSets(std::array<vk::WriteDescriptorSet, 2>{cameraDescriptorWrite, lightDescriptorWrite}, nullptr);
     }
 
     for (auto& model : m_models) {

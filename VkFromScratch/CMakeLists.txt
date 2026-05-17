@@ -16,6 +16,7 @@ find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
+find_package(Stb REQUIRED)
 
 # Link dependencies
 target_link_libraries(VkFromScratch PRIVATE
@@ -26,7 +27,11 @@ target_link_libraries(VkFromScratch PRIVATE
         ${Vulkan_LIBRARIES}
 )
 
-target_include_directories(VkFromScratch PRIVATE ${CMAKE_SOURCE_DIR} ${Vulkan_INCLUDE_DIRS})
+target_include_directories(VkFromScratch PRIVATE 
+        ${CMAKE_SOURCE_DIR} 
+        ${Vulkan_INCLUDE_DIRS} 
+        ${Stb_INCLUDE_DIR}
+)
 
 # Validation layers configuration
 option(ENABLE_VALIDATION_LAYERS "Enable Vulkan validation layers for debugging" ON)

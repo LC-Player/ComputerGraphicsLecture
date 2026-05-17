@@ -50,6 +50,8 @@ find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
+find_package(Stb REQUIRED)
+
 # Set include directories (include all module directories)
 target_include_directories(RayTracing PRIVATE
         ${CMAKE_SOURCE_DIR}
@@ -59,6 +61,7 @@ target_include_directories(RayTracing PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/window
         ${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan
         ${Vulkan_INCLUDE_DIRS}
+        ${Stb_INCLUDE_DIR}
 )
 
 # Link dependencies
