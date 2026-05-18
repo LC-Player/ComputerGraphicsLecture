@@ -1,5 +1,8 @@
 # Lab 3 Report
 
+Wang, Ziyan 24302010023
+2026.5.15
+
 ## Overview
 
 Based on the lab requirement, I implemented multi-light Blinn-Phong rendering, including light definition, shader, and C++ code.
