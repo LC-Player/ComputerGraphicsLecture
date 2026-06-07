@@ -35,5 +35,6 @@ message("slangc executable at ${SLANGC_EXECUTABLE}")
 
 # Add subdirectories for different executables
 add_subdirectory(imgui)
+add_subdirectory(BlinnPhong)
 add_subdirectory(RayTracing)
 add_subdirectory(VkFromScratch)

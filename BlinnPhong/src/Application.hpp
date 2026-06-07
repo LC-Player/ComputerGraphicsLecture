@@ -13,7 +13,7 @@
 #include "Instance.h"
 #include "Light.h"
 
-namespace RYRayTracing {
+namespace RYBlinnPhong {
     class WindowManager;
     class VulkanInstance;
     class VulkanDevice;
@@ -26,7 +26,7 @@ namespace RYRayTracing {
     class Texture;
 }
 
-namespace RYRayTracing {
+namespace RYBlinnPhong {
 
 class Application {
 public:
@@ -150,4 +150,4 @@ private:
     vk::Format findDepthFormat(const std::vector<vk::Format>& candidates) const;
 };
 
-} // namespace RYRayTracing
+} // namespace RYBlinnPhong

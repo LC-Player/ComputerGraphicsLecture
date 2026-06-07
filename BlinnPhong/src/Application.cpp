@@ -29,7 +29,7 @@
 #include "imgui_internal.h"
 #include "Light.h"
 
-namespace RYRayTracing {
+namespace RYBlinnPhong {
 
 Application::Application()
       : m_depthFormat(vk::Format::eUndefined)
@@ -38,7 +38,7 @@ Application::Application()
       , m_windowWidth(1920)
       , m_windowHeight(1080)
       , m_framebufferResized(false) {
-    Logger::init("raytracing.log");
+    Logger::init("blinnphong.log");
     LOG_INFO("=== Vulkan Quad Rendering Application ===");
 }
 
