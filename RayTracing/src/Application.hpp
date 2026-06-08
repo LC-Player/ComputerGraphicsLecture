@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
+#include <chrono>
 #include <vector>
 #include <memory>
 #include <array>
@@ -29,6 +30,14 @@ namespace RYRayTracing {
 
 namespace RYRayTracing {
 
+struct RTGlobalConstants {
+    uint32_t sphereCount;
+    uint32_t lightCount;
+    float ambientStrength;
+    float diffuseStrength;
+    float specularStrength;
+};
+
 class Application {
 public:
     Application();
@@ -52,65 +61,84 @@ private:
     std::vector<Model> m_models;
     std::vector<Instance> m_instances;
 
-    std::vector<std::unique_ptr<Buffer>> m_lightUniformBuffers;
-    std::vector<void*> m_mappedLightUniformData;
+    // ── Descriptor set layouts (organized by logical data group) ──
+    /// Set 0 for "main" (Blinn-Phong) and "rt_main" (compute) pipelines.
+    /// b0: CameraData UBO, b1: point lights SSBO
+    vk::raii::DescriptorSetLayout m_perFrameSetLayout = nullptr;
 
-    // ── Ray tracing compute pipeline ────────────────────────
-    std::unique_ptr<ShaderModule> m_rtComputeShader;
-    vk::raii::DescriptorSetLayout m_rtDescriptorSetLayout = nullptr;
-    vk::raii::PipelineLayout m_rtPipelineLayout = nullptr;
-    vk::raii::DescriptorSet m_rtDescriptorSet = nullptr;
-    vk::raii::DescriptorPool m_rtDescriptorPool = nullptr;
-    std::vector<std::unique_ptr<Buffer>> m_rtCameraUniformBuffers;
-    std::vector<void*> m_mappedRtCameraUniformData;
+    /// Shared combined-image-sampler layout used by:
+    ///   - material textures (set 1 of "main" pipeline)
+    ///   - fullscreen RT output display (set 0 of "fullscreen" pipeline)
+    vk::raii::DescriptorSetLayout m_samplerSetLayout = nullptr;
 
-    // RT output storage image
-    vk::raii::Image m_rtOutputImage = nullptr;
-    vk::raii::DeviceMemory m_rtOutputImageMemory = nullptr;
-    vk::raii::ImageView m_rtOutputImageView = nullptr;
-    vk::raii::Sampler m_rtOutputSampler = nullptr;
+    /// Set 1 for the "rt_main" compute pipeline.
+    /// b0: sphere SSBO, b1: output storage image
+    vk::raii::DescriptorSetLayout m_rtResourceSetLayout = nullptr;
 
-    // Fullscreen display pipeline
-    std::unique_ptr<ShaderModule> m_fullscreenVertShader;
-    std::unique_ptr<ShaderModule> m_fullscreenFragShader;
-    vk::raii::DescriptorSetLayout m_fullscreenDescriptorSetLayout = nullptr;
-    vk::raii::PipelineLayout m_fullscreenPipelineLayout = nullptr;
-    vk::raii::DescriptorSet m_fullscreenDescriptorSet = nullptr;
-
-    // Scene primitives for RT
-    std::unique_ptr<Buffer> m_sphereBuffer;
-    std::vector<SphereData> m_spheres;
-    bool m_spheresDirty = true;
-
-    vk::raii::DescriptorSetLayout m_uboDescriptorSetLayout = nullptr;
-    vk::raii::DescriptorSetLayout m_textureDescriptorSetLayout = nullptr;
-
+    // ── Single descriptor pool (ImGui has its own) ───────────────
     vk::raii::DescriptorPool m_descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> m_uboDescriptorSets;
-
     vk::raii::DescriptorPool m_imguiPool = nullptr;
 
+    // ── Descriptor sets ──────────────────────────────────────────
+    /// Per-frame sets (one per frame-in-flight): camera + light UBO.
+    std::vector<vk::raii::DescriptorSet> m_perFrameDescriptorSets;
+
+    /// RT compute set: sphere SSBO + output storage image.
+    std::vector<vk::raii::DescriptorSet> m_rtDescriptorSets;
+
+    /// Fullscreen display set: RT output as combined image sampler.
+    std::vector<vk::raii::DescriptorSet> m_fullscreenDescriptorSets;
+
+    // ── Uniform buffers ──────────────────────────────────────────
+    std::vector<std::unique_ptr<Buffer>> m_cameraUniformBuffers;
+    std::vector<void*> m_mappedCameraUniformData;
+    std::vector<std::unique_ptr<Buffer>> m_lightBuffers;
+    int m_lightsDirty = m_framesInFlight;
+    bool isLightsDirty() { bool positive = m_lightsDirty > 0; m_lightsDirty -= positive; return positive; }
+    void setLightsDirty() { m_lightsDirty = m_framesInFlight; }
+    int m_spheresDirty = m_framesInFlight;
+    bool isSpheresDirty() { bool positive = m_spheresDirty > 0; m_spheresDirty -= positive; return positive; }
+    void setSpheresDirty() { m_spheresDirty = m_framesInFlight; }
+
+    // ── Shaders ──────────────────────────────────────────────────
     std::unique_ptr<ShaderModule> m_vertexShader;
     std::unique_ptr<ShaderModule> m_fragmentShader;
+    std::unique_ptr<ShaderModule> m_rtComputeShader;
+    std::unique_ptr<ShaderModule> m_fullscreenVertShader;
+    std::unique_ptr<ShaderModule> m_fullscreenFragShader;
 
-    vk::raii::PipelineLayout m_pipelineLayout = nullptr;
+    // ── Pipeline layouts (derived from descriptor set layouts) ───
+    vk::raii::PipelineLayout m_blinnPhongPipelineLayout = nullptr; // {perFrame, sampler}
+    vk::raii::PipelineLayout m_rtPipelineLayout = nullptr;         // {perFrame, rtResource}
+    vk::raii::PipelineLayout m_fullscreenPipelineLayout = nullptr; // {sampler}
 
+    // ── Ray-tracing output resources ─────────────────────────────
+    std::vector<vk::raii::Image> m_rtOutputImages;
+    std::vector<vk::raii::DeviceMemory> m_rtOutputImagesMemory;
+    std::vector<vk::raii::ImageView> m_rtOutputImageViews;
+    vk::raii::Sampler m_rtOutputSampler = nullptr;
+
+    // ── Scene primitives for RT ──────────────────────────────────
+    std::vector<std::unique_ptr<Buffer>> m_sphereBuffers;
+    std::vector<SphereData> m_spheres;
+
+    // ── Framebuffers & depth ──────────────────────────────────
     std::vector<vk::raii::Framebuffer> m_swapChainFramebuffers;
-
     vk::raii::Image m_depthImage = nullptr;
     vk::raii::DeviceMemory m_depthImageMemory = nullptr;
     vk::raii::ImageView m_depthImageView = nullptr;
     vk::Format m_depthFormat;
 
+    // ── Command buffers ───────────────────────────────────────
     std::vector<vk::raii::CommandBuffer> m_commandBuffers;
 
+    // ── Synchronization ────────────────────────────────────────
     std::vector<vk::raii::Semaphore> m_imageAvailableSemaphores;
     std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
     std::vector<vk::raii::Fence> m_inFlightFences;
     std::vector<vk::Fence> m_imagesInFlight;
 
     size_t m_currentFrame;
-
     size_t m_framesInFlight;
 
     uint32_t m_windowWidth;
@@ -119,76 +147,65 @@ private:
     bool m_framebufferResized;
     bool m_imguiInitialized = false;
 
+    // FPS tracking
+    std::chrono::steady_clock::time_point m_fpsLastTime{};
+    int m_fpsFrameCount = 0;
+    float m_currentFps = 0.0f;
+
     Transform m_cameraTransform;
     SceneCamera m_camera;
-    LightInfo m_lights;
+    std::vector<PointLightData> m_pointLights;
 
     void createModels();
     void initVulkan();
-
     void initImGui();
-
     void initComponents();
 
     void initSpheres();
 
     void cleanup();
-
     void recreateSwapChain();
-
     void cleanupSwapChain();
-
     void cleanupSyncObjects();
-
     void cleanupRtResources();
     void cleanupRtSwapChainResources();
 
     void createInstance();
-
     void createDevice();
-
     void createSwapChain();
-
     void createRenderPass();
 
+    void createDescriptorSetLayouts(); // all layouts in one place
+    void createDescriptorPool();       // single pool covering all set types
+    void createDescriptorSets();       // per-frame + material sets
+
     void createGraphicsPipeline();
-
     void createFramebuffers();
-
     void createCommandPool();
 
     void createUniformBuffers();
-    void createUniformBuffersImpl(vk::DeviceSize bufferSize, std::vector<std::unique_ptr<Buffer>>& bufferOut,
+    void createUniformBuffersImpl(vk::DeviceSize bufferSize,
+                                  std::vector<std::unique_ptr<Buffer>>& bufferOut,
                                   std::vector<void*>& mappedDataOut) const;
+    void createLightBuffer();
 
     void createDepthResources();
-
-    void createDescriptorSetLayout();
-
-    void createDescriptorPool();
-
-    void createDescriptorSets();
-
     void createCommandBuffers();
-
     void createSyncObjects();
 
     // RT methods
     void createRtStorageImage();
-    void createRtDescriptorSetLayout();
-    void createRtDescriptorPool();
-    void createRtDescriptorSets();
     void createRtComputePipeline();
-    void createRtCameraUniformBuffers();
+    void createRtResourceDescriptorSet();  // sphere SSBO + output image
     void createSphereBuffer();
     void createFullscreenPipeline();
-    void createFullscreenDescriptorSet();
+    void createFullscreenDescriptorSet();  // RT output as sampler
 
     void updateUniformBuffer(size_t currentFrame);
-    void updateSphereBuffer();
+    void updateLightBuffer(size_t currentFrame);
+    void updateSphereBuffer(size_t currentFrame);
 
     void drawFrame();
-
     void mainLoop();
 
     vk::Format findDepthFormat(const std::vector<vk::Format>& candidates) const;

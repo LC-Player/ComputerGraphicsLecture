@@ -2,12 +2,10 @@
 // Compute shader for real-time ray tracing.
 // Entry point: computeMain
 
-// ── Data structures (must match CPU-side definitions) ──────────────
-
 struct CameraData {
-    float4x4 viewProj;     // unused in compute, needed for UBO layout match
-    float4x4 invViewProj;  // inverse(view * projection) for ray generation
-    float4 position;       // camera world position (w = sphere count)
+    float4x4 viewProj;
+    float4x4 invViewProj;
+    float4 position;       // camera world position (w unused)
 };
 
 struct Sphere {
@@ -15,10 +13,16 @@ struct Sphere {
     float radius;
     float4 color;
     float reflectivity;    // 0.0 = diffuse, 1.0 = perfect mirror
-    float refractivity;    // 0.0 = opaque, 1.0 = pure glass
     float ior;             // index of refraction (e.g. 1.5)
     float _pad;
 };
+
+struct LightData {
+    float3 position;
+    float intensity;
+    float3 color;
+    float maxDistance;
+}
 
 struct Ray {
     float3 origin;
@@ -32,15 +36,27 @@ struct HitResult {
     float3 normal;         // surface normal at hit point
     float4 color;          // surface color
     float reflectivity;
-    float refractivity;
     float ior;
+};
+
+struct RTGlobalConstants {
+    uint sphereCount;
+    uint lightCount;
+    float ambientStrength;
+    float diffuseStrength;
+    float specularStrength;
 };
 
 // ── Bindings ──────────────────────────────────────────────────────
 
+[[vk::push_constant]] RTGlobalConstants pc;
+
+// Set 0: per-frame data (shared with raster pipeline)
 [[vk::binding(0, 0)]] ConstantBuffer<CameraData> camera;
-[[vk::binding(1, 0)]] StructuredBuffer<Sphere>   spheres;
-[[vk::binding(2, 0)]] RWTexture2D<float4>        outputImage;
+[[vk::binding(1, 0)]] StructuredBuffer<LightData> lights;
+// Set 1: RT-specific resources
+[[vk::binding(0, 1)]] StructuredBuffer<Sphere>   spheres;
+[[vk::binding(1, 1)]] RWTexture2D<float4>        outputImage;
 
 // ── Ray-sphere intersection ───────────────────────────────────────
 
@@ -94,10 +110,7 @@ HitResult traceScene(Ray ray)
     result.hit = 0;
     result.t = 1e30;
 
-    // sphere count is packed in camera.position.w
-    uint sphereCount = uint(camera.position.w);
-
-    for (uint i = 0; i < sphereCount; i++) {
+    for (uint i = 0; i < pc.sphereCount; i++) {
         float t0, t1;
         if (!intersectSphere(ray, spheres[i], t0, t1)) continue;
 
@@ -111,7 +124,6 @@ HitResult traceScene(Ray ray)
         result.normal = normalize(result.point - spheres[i].center);
         result.color = spheres[i].color;
         result.reflectivity = spheres[i].reflectivity;
-        result.refractivity = spheres[i].refractivity;
         result.ior = spheres[i].ior;
     }
 
@@ -156,55 +168,121 @@ float3 getBackground(float3 direction)
 
     // Simple sky gradient (replace with skybox above)
     float t = 0.5 * (direction.y + 1.0);
-    return lerp(float3(0.5, 0.7, 0.9), float3(0.9, 0.95, 1.0), t);
+    return lerp(float3(1.0, 0.0, 0.0), float3(0.0, 0.0, 1.0), t);
 }
 
 // ── Shading ───────────────────────────────────────────────────────
 
-float3 shadeHit(Ray ray, HitResult hit)
-{
-    // Normal visualization (MVP)
-    float3 color = hit.color.rgb * (hit.normal * 0.5 + 0.5);
+float3 reflectDir(float3 I, float3 N) {
+    return I - N * 2.0 * dot(I, N);
+}
 
-    //*****************************************************************
-    // TODO C: Blinn-Phong shading
-    //   Replace the normal visualization above with proper lighting.
-    //
-    //   For each light source:
-    //     float3 lightDir = normalize(lightPos - hit.point);
-    //     float3 viewDir  = -ray.direction;
-    //     float3 halfVec  = normalize(lightDir + viewDir);
-    //
-    //     // Diffuse (Lambert)
-    //     float diff = max(dot(hit.normal, lightDir), 0.0);
-    //
-    //     // Specular (Blinn-Phong)
-    //     float spec = pow(max(dot(hit.normal, halfVec), 0.0), 64.0);
-    //
-    //     // Attenuation
-    //     float d = distance(lightPos, hit.point);
-    //     float atten = intensity / (1.0 + d * d);
-    //
-    //     color += atten * (diff + spec) * lightColor * hit.color.rgb;
-    //
-    //   show your code
-    //
-    //*****************************************************************
+float3 refractDir(float3 I, float3 N, float eta_t, float eta_i) {
+    float cosi = -max(-1.f, min(1.f, dot(I, N)));
 
-    //*****************************************************************
-    // TODO D: Shadow rays
-    //   For each light, trace a shadow ray from hit.point towards the
-    //   light. If any object blocks it before reaching the light, skip
-    //   that light's contribution.
-    //
-    //   Hint: offset = hit.point + hit.normal * 0.001;
-    //         shadowRay = Ray(offset, lightDir);
-    //         shadowHit = traceScene(shadowRay);
-    //         if (shadowHit.hit && shadowHit.t < lightDistance) → in shadow
-    //
-    //   show your code
-    //
-    //*****************************************************************
+    float3 finalN = N;
+    float finalEta_i = eta_i;
+    float finalEta_t = eta_t;
+
+    if (cosi < 0) {
+        finalN = -N;
+        finalEta_i = eta_t;
+        finalEta_t = eta_i;
+        cosi = -cosi;
+    }
+
+    float eta = finalEta_i / finalEta_t;
+    float k = 1.0 - eta * eta * (1.0 - cosi * cosi);
+
+    if (k < 0) {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    return I * eta + finalN * (eta * cosi - sqrt(k));
+}
+
+struct CastRayStackNode {
+    Ray ray;
+    float3 throughput; // 当前光线的颜色贡献权重（吞吐量）
+    int depth;
+};
+
+float3 castRay(Ray rayInitial) {
+
+    float3 color = float3(0.0);
+    CastRayStackNode stack[8];
+    int stackPtr = 0;
+    stack[stackPtr].ray = rayInitial;
+    stack[stackPtr].throughput = float3(1.0);
+    stack[stackPtr].depth = 0;
+    stackPtr += 1;
+    while (stackPtr > 0) {
+        stackPtr -= 1;
+        Ray ray = stack[stackPtr].ray;
+        float3 throughput = stack[stackPtr].throughput;
+        int depth = stack[stackPtr].depth;
+        HitResult hit = traceScene(ray);
+
+        if (hit.hit != 0)
+        {
+            //******************************************************************************************************************
+            // note: whitted style rt formula: sum contritions from local (diffuse, specular), reflection(mirror) and refraction
+            //******************************************************************************************************************
+
+            float diffuse_light_intensity = 0, specular_light_intensity = 0;
+            for (uint i = 0; i < pc.lightCount; i++) {
+                float3 light_dir = normalize(lights[i].position - hit.point);
+                float light_distance = length(lights[i].position - hit.point);
+
+                float3 shadow_orig = select(dot(light_dir, hit.normal) < 0, hit.point - hit.normal * 1e-3, hit.point + hit.normal * 1e-3); // checking if the point lies in the shadow of the lights[i]
+                HitResult hitResult = traceScene(Ray(shadow_orig, light_dir));
+
+                // shadow ray
+                if (hitResult.hit != 0 && length(hit.point - shadow_orig) < light_distance) {
+                    continue;
+                }
+
+                // local illumination: diffuse, specular
+                diffuse_light_intensity += lights[i].intensity * max(0.0, dot(light_dir, hit.normal));
+                specular_light_intensity += pow(
+                    max(0.0, 
+                        -dot(reflect(-light_dir, hit.normal), ray.direction)),
+                    60 /* specular component, TODO */
+                ) * lights[i].intensity;
+            }
+            float3 localShading = hit.color.xyz * diffuse_light_intensity * 0.1 /* material.albedo[0], TODO */
+                                  + specular_light_intensity * 0.8;             /* material.albedo[1], TODO */
+            color += throughput * localShading;
+            //*************************************************************************************************************
+            // Note: (1) recursive calling reflect() and refract() without conditioning
+            //       (2) refract() use default value of refraction ray and recursive calling itself for changing inside-out
+            //**************************************************************************************************************
+            float3 reflect_dir = normalize(reflectDir(ray.direction, hit.normal));
+            float3 refract_dir = normalize(refractDir(ray.direction, hit.normal, hit.ior, 1.0));
+            float3 reflect_orig = select( dot(reflect_dir, hit.normal) < 0, hit.point - hit.normal * 1e-3, hit.point + hit.normal * 1e-3); // offset the original point to avoid occlusion by the object itself
+            float3 refract_orig = select(dot(refract_dir, hit.normal) < 0, hit.point - hit.normal * 1e-3, hit.point + hit.normal * 1e-3);
+            if (depth < 4 && stackPtr < 8) {
+                float3 next_refract_throughput = throughput * 0.0; /* material.albedo[3] */ 
+                if (any(next_refract_throughput > 0.0)) {
+                    stack[stackPtr].ray = Ray(refract_orig, refract_dir);
+                    stack[stackPtr].throughput = next_refract_throughput;
+                    stack[stackPtr].depth = depth + 1;
+                    stackPtr += 1;
+                }
+
+                float3 next_reflect_throughput = throughput * 0.2; /* material.albedo[2] */
+                if (stackPtr < 8) {
+                    stack[stackPtr].ray = Ray(reflect_orig, reflect_dir);
+                    stack[stackPtr].throughput = next_reflect_throughput;
+                    stack[stackPtr].depth = depth + 1;
+                    stackPtr += 1;
+                }
+            }
+        }
+        else {
+            color += throughput * getBackground(ray.direction);
+        }
+    }
 
     return color;
 }
@@ -222,43 +300,8 @@ void computeMain(uint3 dispatchThreadID : SV_DispatchThreadID)
     if (pixel.x >= imageSize.x || pixel.y >= imageSize.y) return;
 
     Ray ray = generateCameraRay(pixel, imageSize);
-    HitResult hit = traceScene(ray);
 
-    float3 color;
-    if (hit.hit != 0)
-    {
-        color = shadeHit(ray, hit);
-
-        //*************************************************************
-        // TODO E: Reflection (recursive ray tracing)
-        //   If hit.reflectivity > 0:
-        //     float3 reflectDir = reflect(ray.direction, hit.normal);
-        //     Ray reflRay = { hit.point + hit.normal*0.001, reflectDir };
-        //     HitResult reflHit = traceScene(reflRay);
-        //     if (reflHit.hit) ... add reflected color weighted by hit.reflectivity
-        //
-        //   show your code
-        //
-        //*************************************************************
-
-        //*************************************************************
-        // TODO F: Refraction (transmission)
-        //   If hit.refractivity > 0:
-        //     Use Snell's law: n1*sin(theta1) = n2*sin(theta2)
-        //     eta = (front-face) ? 1.0/hit.ior : hit.ior
-        //     float3 refrDir = refract(ray.direction, hit.normal, eta);
-        //     Ray refrRay = { hit.point - hit.normal*0.001, refrDir };
-        //     HitResult refrHit = traceScene(refrRay);
-        //     ... add refracted color weighted by hit.refractivity
-        //
-        //   show your code
-        //
-        //*************************************************************
-    }
-    else
-    {
-        color = getBackground(ray.direction);
-    }
+    float3 color = castRay(ray);
 
     outputImage[pixel] = float4(color, 1.0);
 }

@@ -32,12 +32,13 @@
 namespace RYRayTracing {
 
 Application::Application()
-      : m_depthFormat(vk::Format::eUndefined)
+    : m_depthFormat(vk::Format::eUndefined)
       , m_currentFrame(0)
       , m_framesInFlight(0)
       , m_windowWidth(1920)
       , m_windowHeight(1080)
-      , m_framebufferResized(false) {
+      , m_framebufferResized(false)
+      , m_fpsLastTime(std::chrono::steady_clock::now()) {
     Logger::init("raytracing.log");
     LOG_INFO("=== Vulkan Quad Rendering Application ===");
 }
@@ -165,27 +166,27 @@ void Application::initVulkan() {
     createDevice();
     createSwapChain();
     createRenderPass();
-    createDescriptorSetLayout();
-    createGraphicsPipeline(); // pipeline needs descriptor set layout
+    createDescriptorSetLayouts();
+    createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
     createCommandPool();
+#if 0
     createModels();
+#endif
     createUniformBuffers();
+    createLightBuffer();
     createDescriptorPool();
     createDescriptorSets();
     createCommandBuffers();
     createSyncObjects();
 
     createRtStorageImage();
-    createRtDescriptorSetLayout();
-    createRtDescriptorPool();
     createRtComputePipeline();
-    createRtCameraUniformBuffers();
     initSpheres();
     createSphereBuffer();
-    createRtDescriptorSets();
-    createFullscreenDescriptorSet();  // creates layout + set (must be before pipeline)
+    createRtResourceDescriptorSet();
+    createFullscreenDescriptorSet();
     createFullscreenPipeline();
 
     LOG_INFO("Full rendering pipeline initialized (RT compute + display)");
@@ -245,31 +246,9 @@ void Application::initComponents() {
     m_cameraTransform.translation = { 0, 0, 6 };
     m_cameraTransform.rotation = { 0, 0, 0 };
 
-    m_lights.pointLight1.pos = {4.0f, 4.0f, 4.0f};
-    m_lights.pointLight1.color = {1.0f, 1.0f, 1.0f};
-    m_lights.pointLight1.intensity = 20.0f;
-    m_lights.pointLight1.maxDistance = 30.0f;
-
-    m_lights.pointLight2.pos = {-4.0f, 4.0f, 4.0f};
-    m_lights.pointLight2.color = {1.0f, 1.0f, 1.0f};
-    m_lights.pointLight2.intensity = 20.0f;
-    m_lights.pointLight2.maxDistance = 30.0f;
-
-    m_lights.spotLight.pos = {3.0f, 2.0f, 2.0f};
-    m_lights.spotLight.dir = glm::normalize(glm::vec3{-1.0f, -1.0f, -1.0f});
-    m_lights.spotLight.color = {0.0f, 1.0f, 0.0f};
-    m_lights.spotLight.cosineInclinationAngle = cos(glm::radians(15.5f));
-    m_lights.spotLight.cosineExclusivityAngle = cos(glm::radians(32.5f));
-    m_lights.spotLight.intensity = 20.0f;
-    m_lights.spotLight.maxDistance = 15.0f;
-
-    m_lights.directionalLight.dir = glm::normalize(glm::vec3{-0.5f, -1.0f, -0.5f});
-    m_lights.directionalLight.color = {1.0f, 0.95f, 0.9f};
-    m_lights.directionalLight.intensity = 0.5f;
-
-    m_lights.ambientArgs = {0.1f, 0.1f, 0.1f, 0.1f};
-    m_lights.diffuseStrength = 0.5f;
-    m_lights.specularStrength = 1.0f;
+    m_pointLights.push_back({{4.0f, 4.0f, 4.0f}, 20.0f, {1.0f, 1.0f, 1.0f}, 30.0f});
+    m_pointLights.push_back({{-4.0f, 4.0f, 4.0f}, 20.0f, {1.0f, 1.0f, 1.0f}, 30.0f});
+    setLightsDirty();
 }
 
 void Application::cleanup() {
@@ -289,18 +268,24 @@ void Application::cleanup() {
     cleanupSyncObjects();
     cleanupRtResources();
 
-    m_mappedLightUniformData.clear();
-
-    m_commandBuffers.clear();
-    m_uboDescriptorSets.clear();
+    m_perFrameDescriptorSets.clear();
     m_descriptorPool = nullptr;
-    m_uboDescriptorSetLayout = nullptr;
-    m_textureDescriptorSetLayout = nullptr;
+    m_perFrameSetLayout = nullptr;
+    m_samplerSetLayout = nullptr;
+    m_rtResourceSetLayout = nullptr;
     m_imguiPool = nullptr;
-    m_pipelineLayout = nullptr;
+    m_blinnPhongPipelineLayout = nullptr;
+    m_rtPipelineLayout = nullptr;
+    m_fullscreenPipelineLayout = nullptr;
     m_fragmentShader.reset();
     m_vertexShader.reset();
-    m_lightUniformBuffers.clear();
+    m_rtComputeShader.reset();
+    m_fullscreenVertShader.reset();
+    m_fullscreenFragShader.reset();
+    m_cameraUniformBuffers.clear();
+    m_mappedCameraUniformData.clear();
+    m_lightBuffers.clear();
+    m_commandBuffers.clear();
     m_instances.clear();
     m_models.clear();
     m_commandManager.reset();
@@ -366,41 +351,59 @@ void Application::createRenderPass() {
     LOG_INFO("Render pass created");
 }
 
-void Application::createDescriptorSetLayout() {
-    LOG_INFO("Creating descriptor set layout...");
+void Application::createDescriptorSetLayouts() {
+    LOG_INFO("Creating descriptor set layouts...");
 
+    // Per-frame: b0 = camera UBO, b1 = light SSBO
     {
-        std::array<vk::DescriptorSetLayoutBinding, 2> layoutBinding;
-        vk::DescriptorSetLayoutBinding& cameraUboLayoutBinding = layoutBinding[0];
-        cameraUboLayoutBinding.binding = 0;
-        cameraUboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-        cameraUboLayoutBinding.descriptorCount = 1;
-        cameraUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+        std::array<vk::DescriptorSetLayoutBinding, 2> bindings;
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+        bindings[0].descriptorCount = 1;
+        bindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eCompute;
 
-        vk::DescriptorSetLayoutBinding& lightUboLayoutBinding = layoutBinding[1];
-        lightUboLayoutBinding.binding = 1;
-        lightUboLayoutBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-        lightUboLayoutBinding.descriptorCount = 1;
-        lightUboLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[1].descriptorCount = 1;
+        bindings[1].stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eCompute;
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo;
-        layoutInfo.setBindings(layoutBinding);
-        m_uboDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
+        layoutInfo.setBindings(bindings);
+        m_perFrameSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
     }
 
+    // Sampler: b0 = combined image sampler (shared by material textures and fullscreen display)
     {
-        vk::DescriptorSetLayoutBinding samplerLayoutBinding;
-        samplerLayoutBinding.binding = 0;
-        samplerLayoutBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-        samplerLayoutBinding.descriptorCount = 1;
-        samplerLayoutBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+        vk::DescriptorSetLayoutBinding binding;
+        binding.binding = 0;
+        binding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        binding.descriptorCount = 1;
+        binding.stageFlags = vk::ShaderStageFlagBits::eFragment;
 
-        vk::DescriptorSetLayoutCreateInfo textureLayoutInfo;
-        textureLayoutInfo.setBindings(samplerLayoutBinding);
-        m_textureDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(textureLayoutInfo);
+        vk::DescriptorSetLayoutCreateInfo layoutInfo;
+        layoutInfo.setBindings(binding);
+        m_samplerSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
     }
 
-    LOG_INFO("Descriptor set layout created");
+    // RT resource: b0 = spheres SSBO, b1 = output storage image
+    {
+        std::array<vk::DescriptorSetLayoutBinding, 2> bindings;
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[0].descriptorCount = 1;
+        bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = vk::DescriptorType::eStorageImage;
+        bindings[1].descriptorCount = 1;
+        bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        vk::DescriptorSetLayoutCreateInfo layoutInfo;
+        layoutInfo.setBindings(bindings);
+        m_rtResourceSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
+    }
+
+    LOG_INFO("Descriptor set layouts created");
 }
 
 void Application::createGraphicsPipeline() {
@@ -418,11 +421,16 @@ void Application::createGraphicsPipeline() {
 
         LOG_INFO("Shaders loaded successfully");
 
-        std::array<vk::DescriptorSetLayout, 2> setLayouts = {*m_uboDescriptorSetLayout, *m_textureDescriptorSetLayout};
+        vk::PushConstantRange pcRange;
+        pcRange.stageFlags = vk::ShaderStageFlagBits::eFragment;
+        pcRange.size = sizeof(RTGlobalConstants);
+
+        std::array<vk::DescriptorSetLayout, 2> setLayouts = {*m_perFrameSetLayout, *m_samplerSetLayout};
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.setSetLayouts(setLayouts);
+        pipelineLayoutInfo.setPushConstantRanges(pcRange);
 
-        m_pipelineLayout = m_vulkanDevice->get().createPipelineLayout(pipelineLayoutInfo);
+        m_blinnPhongPipelineLayout = m_vulkanDevice->get().createPipelineLayout(pipelineLayoutInfo);
         LOG_INFO("Pipeline layout created");
 
         if (!m_pipelineManager) {
@@ -432,7 +440,7 @@ void Application::createGraphicsPipeline() {
         PipelineConfig pipelineConfig;
         pipelineConfig.vertexShader = *m_vertexShader->get();
         pipelineConfig.fragmentShader = *m_fragmentShader->get();
-        pipelineConfig.pipelineLayout = *m_pipelineLayout;
+        pipelineConfig.pipelineLayout = *m_blinnPhongPipelineLayout;
         pipelineConfig.renderPass = *m_renderPassManager->get();
         pipelineConfig.vertexEntryPoint = "vertMain";
         pipelineConfig.fragmentEntryPoint = "fragMain";
@@ -503,7 +511,7 @@ void Application::createUniformBuffers() {
     LOG_INFO("Creating uniform buffers...");
 
     m_framesInFlight = m_swapChainManager->getImageCount();
-    createUniformBuffersImpl(sizeof(LightInfo), m_lightUniformBuffers, m_mappedLightUniformData);
+    createUniformBuffersImpl(sizeof(CameraData), m_cameraUniformBuffers, m_mappedCameraUniformData);
     LOG_INFO("Uniform buffers created");
 }
 
@@ -519,6 +527,24 @@ void Application::createUniformBuffersImpl(vk::DeviceSize bufferSize, std::vecto
         mappedDataOut.push_back(bufferOut[i]->map(0, bufferSize));
     }
 
+}
+
+void Application::createLightBuffer() {
+    constexpr size_t kMaxLights = 16;
+    if (m_pointLights.empty()) {
+        m_pointLights.push_back({});
+    }
+    for (size_t i = 0; i < m_framesInFlight; i++) {
+        auto buf = std::make_unique<Buffer>(
+            Buffer::createBuffer(m_vulkanDevice.get(),
+                kMaxLights * sizeof(PointLightData),
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+        buf->copyFrom(m_pointLights.data(), m_pointLights.size() * sizeof(PointLightData));
+        m_lightBuffers.emplace_back(std::move(buf));
+    }
+    m_lightsDirty = 0;
+    LOG_INFO("Light SSBO created (max " + std::to_string(kMaxLights) + " lights)");
 }
 
 
@@ -586,15 +612,21 @@ void Application::createDescriptorPool() {
 
     uint32_t modelCount = static_cast<uint32_t>(m_models.size());
 
-    std::array<vk::DescriptorPoolSize, 2> poolSizes;
+    uint32_t fif = static_cast<uint32_t>(m_framesInFlight);
+
+    std::array<vk::DescriptorPoolSize, 4> poolSizes;
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = static_cast<uint32_t>(m_framesInFlight) * 2; /* one for camera, one for light */
+    poolSizes[0].descriptorCount = fif; // camera UBO per frame
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = modelCount + 1; // +1 for fullscreen RT display set
+    poolSizes[1].descriptorCount = modelCount + fif; // material textures + fullscreen per frame
+    poolSizes[2].type = vk::DescriptorType::eStorageBuffer;
+    poolSizes[2].descriptorCount = fif * 2; // spheres + lights SSBO per frame
+    poolSizes[3].type = vk::DescriptorType::eStorageImage;
+    poolSizes[3].descriptorCount = fif; // RT output per frame
 
     vk::DescriptorPoolCreateInfo poolInfo;
     poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = static_cast<uint32_t>(m_framesInFlight) + modelCount + 1; // +1 for fullscreen # descriptor set
+    poolInfo.maxSets = fif * 3 + modelCount; // per-frame + RT resource + fullscreen + materials
     poolInfo.setPoolSizes(poolSizes);
     m_descriptorPool = m_vulkanDevice->get().createDescriptorPool(poolInfo);
 
@@ -604,30 +636,42 @@ void Application::createDescriptorPool() {
 void Application::createDescriptorSets() {
     LOG_INFO("Creating descriptor sets...");
 
-    std::vector<vk::DescriptorSetLayout> layouts(m_framesInFlight, *m_uboDescriptorSetLayout);
+    // Per-frame sets: camera UBO (b0) + light UBO (b1)
+    std::vector<vk::DescriptorSetLayout> layouts(m_framesInFlight, *m_perFrameSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo;
-    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.descriptorPool = *m_descriptorPool;
     allocInfo.setSetLayouts(layouts);
-    m_uboDescriptorSets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
+    m_perFrameDescriptorSets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
 
     for (size_t i = 0; i < m_framesInFlight; ++i) {
+        vk::DescriptorBufferInfo cameraBufferInfo;
+        cameraBufferInfo.buffer = *m_cameraUniformBuffers[i]->get();
+        cameraBufferInfo.offset = 0;
+        cameraBufferInfo.range = sizeof(CameraData);
+
         vk::DescriptorBufferInfo lightBufferInfo;
-        lightBufferInfo.buffer = *m_lightUniformBuffers[i]->get();
+        lightBufferInfo.buffer = *m_lightBuffers[i]->get();
         lightBufferInfo.offset = 0;
-        lightBufferInfo.range = sizeof(LightInfo);
+        lightBufferInfo.range = VK_WHOLE_SIZE;
 
-        vk::WriteDescriptorSet lightDescriptorWrite;
-        lightDescriptorWrite.dstSet = m_uboDescriptorSets[i];
-        lightDescriptorWrite.dstBinding = 1;
-        lightDescriptorWrite.dstArrayElement = 0;
-        lightDescriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-        lightDescriptorWrite.setBufferInfo(lightBufferInfo);
+        std::array<vk::WriteDescriptorSet, 2> writes;
+        writes[0].dstSet = *m_perFrameDescriptorSets[i];
+        writes[0].dstBinding = 0;
+        writes[0].dstArrayElement = 0;
+        writes[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+        writes[0].setBufferInfo(cameraBufferInfo);
 
-        m_vulkanDevice->get().updateDescriptorSets(std::array{lightDescriptorWrite}, nullptr);
+        writes[1].dstSet = *m_perFrameDescriptorSets[i];
+        writes[1].dstBinding = 1;
+        writes[1].dstArrayElement = 0;
+        writes[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+        writes[1].setBufferInfo(lightBufferInfo);
+
+        m_vulkanDevice->get().updateDescriptorSets(writes, nullptr);
     }
 
     for (auto& model : m_models) {
-        model.createTextureDescriptorSet(m_vulkanDevice->get(), m_descriptorPool, m_textureDescriptorSetLayout);
+        model.createTextureDescriptorSet(m_vulkanDevice->get(), m_descriptorPool, m_samplerSetLayout);
     }
 
     LOG_INFO("Descriptor sets created");
@@ -667,20 +711,24 @@ void Application::createSyncObjects() {
 
 void Application::updateUniformBuffer(size_t currentFrame) {
     glm::mat4 viewProj = m_camera.GetViewProj() * glm::inverse(m_cameraTransform());
-    CameraData data{viewProj, glm::inverse(viewProj), glm::vec4(m_cameraTransform.translation, float(m_spheres.size()))};
-    memcpy(m_mappedRtCameraUniformData[currentFrame], &data, sizeof(data));
-    memcpy(m_mappedLightUniformData[currentFrame], &m_lights, sizeof(LightInfo));
+    CameraData data{viewProj, glm::inverse(viewProj), glm::vec4(m_cameraTransform.translation, 0.0f)};
+    memcpy(m_mappedCameraUniformData[currentFrame], &data, sizeof(data));
 }
 
-void Application::updateSphereBuffer() {
-    if (m_spheres.empty()) return;
-    m_sphereBuffer->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
-    m_spheresDirty = false;
+void Application::updateLightBuffer(size_t currentFrame) {
+    if (!isLightsDirty() || m_pointLights.empty()) return;
+    m_lightBuffers[currentFrame]->copyFrom(m_pointLights.data(),
+        m_pointLights.size() * sizeof(PointLightData));
+}
+
+void Application::updateSphereBuffer(size_t currentFrame) {
+    if (!isSpheresDirty() || m_spheres.empty()) return;
+    m_sphereBuffers[currentFrame]->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
 }
 
 
 void Application::cleanupSwapChain() {
-    m_uboDescriptorSets.clear();
+    m_perFrameDescriptorSets.clear();
     for (auto& model : m_models) {
         model.resetTextureDescriptorSet();
     }
@@ -688,6 +736,8 @@ void Application::cleanupSwapChain() {
     m_depthImageView = nullptr;
     m_depthImage = nullptr;
     m_depthImageMemory = nullptr;
+    m_blinnPhongPipelineLayout = nullptr;
+    m_pipelineManager.reset();
     m_renderPassManager.reset();
 }
 
@@ -702,16 +752,7 @@ void Application::cleanupSyncObjects() {
 
 void Application::cleanupRtResources() {
     cleanupRtSwapChainResources();
-
-    m_rtDescriptorPool = nullptr;
-    m_rtDescriptorSetLayout = nullptr;
-    m_rtPipelineLayout = nullptr;
-    m_rtComputeShader.reset();
-
-    m_sphereBuffer.reset();
-    m_rtCameraUniformBuffers.clear();
-    m_mappedRtCameraUniformData.clear();
-
+    m_sphereBuffers.clear();
 }
 
 // ── RT storage image ──────────────────────────────────────────────
@@ -731,59 +772,61 @@ void Application::createRtStorageImage() {
     imageInfo.sharingMode = vk::SharingMode::eExclusive;
     imageInfo.samples = vk::SampleCountFlagBits::e1;
 
-    m_rtOutputImage = m_vulkanDevice->get().createImage(imageInfo);
+    for (size_t i = 0; i < m_framesInFlight; i++) {
+        m_rtOutputImages.emplace_back(m_vulkanDevice->get().createImage(imageInfo));
 
-    auto memReqs = m_rtOutputImage.getMemoryRequirements();
-    vk::MemoryAllocateInfo allocInfo;
-    allocInfo.allocationSize = memReqs.size;
-    allocInfo.memoryTypeIndex = m_vulkanDevice->findMemoryType(
-        memReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
-    m_rtOutputImageMemory = m_vulkanDevice->get().allocateMemory(allocInfo);
-    m_rtOutputImage.bindMemory(*m_rtOutputImageMemory, 0);
+        auto memReqs = m_rtOutputImages[i].getMemoryRequirements();
+        vk::MemoryAllocateInfo allocInfo;
+        allocInfo.allocationSize = memReqs.size;
+        allocInfo.memoryTypeIndex = m_vulkanDevice->findMemoryType(
+            memReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+        m_rtOutputImagesMemory.emplace_back(m_vulkanDevice->get().allocateMemory(allocInfo));
+        m_rtOutputImages[i].bindMemory(*m_rtOutputImagesMemory[i], 0);
 
-    // Transition to GENERAL layout once (compute writes + fragment reads both use GENERAL)
-    {
-        vk::CommandBuffer cmd = m_commandBuffers[0];
-        cmd.reset();
-        vk::CommandBufferBeginInfo beginInfo;
-        cmd.begin(beginInfo);
+        // Transition to GENERAL layout once (compute writes + fragment reads both use GENERAL)
+        {
+            vk::CommandBuffer cmd = m_commandBuffers[0];
+            cmd.reset();
+            vk::CommandBufferBeginInfo beginInfo;
+            cmd.begin(beginInfo);
 
-        vk::ImageMemoryBarrier barrier;
-        barrier.setOldLayout(vk::ImageLayout::eUndefined);
-        barrier.setNewLayout(vk::ImageLayout::eGeneral);
-        barrier.setImage(*m_rtOutputImage);
-        barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-        barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
-        barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-        barrier.subresourceRange.baseMipLevel = 0;
-        barrier.subresourceRange.levelCount = 1;
-        barrier.subresourceRange.baseArrayLayer = 0;
-        barrier.subresourceRange.layerCount = 1;
-        barrier.setSrcAccessMask(vk::AccessFlagBits::eNone);
-        barrier.setDstAccessMask(vk::AccessFlagBits::eShaderWrite);
+            vk::ImageMemoryBarrier barrier;
+            barrier.setOldLayout(vk::ImageLayout::eUndefined);
+            barrier.setNewLayout(vk::ImageLayout::eGeneral);
+            barrier.setImage(*m_rtOutputImages[i]);
+            barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+            barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+            barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            barrier.subresourceRange.baseMipLevel = 0;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.subresourceRange.baseArrayLayer = 0;
+            barrier.subresourceRange.layerCount = 1;
+            barrier.setSrcAccessMask(vk::AccessFlagBits::eNone);
+            barrier.setDstAccessMask(vk::AccessFlagBits::eShaderWrite);
 
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eTopOfPipe,
-            vk::PipelineStageFlagBits::eComputeShader,
-            {}, nullptr, nullptr, barrier);
-        cmd.end();
+            cmd.pipelineBarrier(
+                vk::PipelineStageFlagBits::eTopOfPipe,
+                vk::PipelineStageFlagBits::eComputeShader,
+                {}, nullptr, nullptr, barrier);
+            cmd.end();
 
-        vk::SubmitInfo submitInfo;
-        submitInfo.setCommandBuffers(cmd);
-        m_vulkanDevice->getGraphicsQueue().submit(submitInfo, nullptr);
-        m_vulkanDevice->waitIdle();
+            vk::SubmitInfo submitInfo;
+            submitInfo.setCommandBuffers(cmd);
+            m_vulkanDevice->getGraphicsQueue().submit(submitInfo, nullptr);
+            m_vulkanDevice->waitIdle();
+        }
+
+        vk::ImageViewCreateInfo viewInfo;
+        viewInfo.image = *m_rtOutputImages[i];
+        viewInfo.viewType = vk::ImageViewType::e2D;
+        viewInfo.format = vk::Format::eR8G8B8A8Unorm;
+        viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+        m_rtOutputImageViews.emplace_back(m_vulkanDevice->get().createImageView(viewInfo));
     }
-
-    vk::ImageViewCreateInfo viewInfo;
-    viewInfo.image = *m_rtOutputImage;
-    viewInfo.viewType = vk::ImageViewType::e2D;
-    viewInfo.format = vk::Format::eR8G8B8A8Unorm;
-    viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 1;
-    m_rtOutputImageView = m_vulkanDevice->get().createImageView(viewInfo);
 
     vk::SamplerCreateInfo samplerInfo;
     samplerInfo.magFilter = vk::Filter::eLinear;
@@ -796,112 +839,49 @@ void Application::createRtStorageImage() {
     LOG_INFO("RT storage image created: " + std::to_string(m_windowWidth) + "x" + std::to_string(m_windowHeight));
 }
 
-// ── RT descriptor set layout ──────────────────────────────────────
+// ── RT resource descriptor set ───────────────────────────────────
 
-void Application::createRtDescriptorSetLayout() {
-    // binding 0: CameraData UBO
-    vk::DescriptorSetLayoutBinding cameraBinding;
-    cameraBinding.binding = 0;
-    cameraBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
-    cameraBinding.descriptorCount = 1;
-    cameraBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
-
-    // binding 1: Spheres SSBO
-    vk::DescriptorSetLayoutBinding sphereBinding;
-    sphereBinding.binding = 1;
-    sphereBinding.descriptorType = vk::DescriptorType::eStorageBuffer;
-    sphereBinding.descriptorCount = 1;
-    sphereBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
-
-    // binding 2: Output storage image
-    vk::DescriptorSetLayoutBinding imageBinding;
-    imageBinding.binding = 2;
-    imageBinding.descriptorType = vk::DescriptorType::eStorageImage;
-    imageBinding.descriptorCount = 1;
-    imageBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
-
-    std::array<vk::DescriptorSetLayoutBinding, 3> bindings = {cameraBinding, sphereBinding, imageBinding};
-    vk::DescriptorSetLayoutCreateInfo layoutInfo;
-    layoutInfo.setBindings(bindings);
-    m_rtDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
-
-    LOG_INFO("RT descriptor set layout created");
-}
-
-void Application::createRtDescriptorPool() {
-    std::array<vk::DescriptorPoolSize, 3> poolSizes;
-    poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = 1;
-    poolSizes[1].type = vk::DescriptorType::eStorageBuffer;
-    poolSizes[1].descriptorCount = 1;
-    poolSizes[2].type = vk::DescriptorType::eStorageImage;
-    poolSizes[2].descriptorCount = 1;
-
-    vk::DescriptorPoolCreateInfo poolInfo;
-    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = 1;
-    poolInfo.setPoolSizes(poolSizes);
-    m_rtDescriptorPool = m_vulkanDevice->get().createDescriptorPool(poolInfo);
-
-    LOG_INFO("RT descriptor pool created");
-}
-
-void Application::createRtDescriptorSets() {
-    std::vector<vk::DescriptorSetLayout> layouts(1, *m_rtDescriptorSetLayout);
+void Application::createRtResourceDescriptorSet() {
+    std::vector<vk::DescriptorSetLayout> layouts(m_framesInFlight, *m_rtResourceSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo;
-    allocInfo.descriptorPool = m_rtDescriptorPool;
+    allocInfo.descriptorPool = *m_descriptorPool;
     allocInfo.setSetLayouts(layouts);
-    std::vector<vk::raii::DescriptorSet> sets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
-    m_rtDescriptorSet = std::move(sets[0]);
+    m_rtDescriptorSets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
 
-    // Write camera UBO (binding 0)
-    {
-        vk::DescriptorBufferInfo bufferInfo;
-        bufferInfo.buffer = *m_rtCameraUniformBuffers[0]->get();
-        bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(CameraData);
+    for (size_t i = 0; i < m_framesInFlight; ++i) {
+        // b0: sphere SSBO
+        {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.buffer = *m_sphereBuffers[i]->get();
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
 
-        vk::WriteDescriptorSet write;
-        write.dstSet = *m_rtDescriptorSet;
-        write.dstBinding = 0;
-        write.dstArrayElement = 0;
-        write.descriptorType = vk::DescriptorType::eUniformBuffer;
-        write.setBufferInfo(bufferInfo);
-        m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 0;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eStorageBuffer;
+            write.setBufferInfo(bufferInfo);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
+
+        // b1: output storage image
+        {
+            vk::DescriptorImageInfo imageInfo;
+            imageInfo.imageView = *m_rtOutputImageViews[i];
+            imageInfo.imageLayout = vk::ImageLayout::eGeneral;
+
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 1;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eStorageImage;
+            write.setImageInfo(imageInfo);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
     }
 
-    // Write spheres SSBO (binding 1)
-    {
-        vk::DescriptorBufferInfo bufferInfo;
-        bufferInfo.buffer = *m_sphereBuffer->get();
-        bufferInfo.offset = 0;
-        bufferInfo.range = VK_WHOLE_SIZE;
-
-        vk::WriteDescriptorSet write;
-        write.dstSet = *m_rtDescriptorSet;
-        write.dstBinding = 1;
-        write.dstArrayElement = 0;
-        write.descriptorType = vk::DescriptorType::eStorageBuffer;
-        write.setBufferInfo(bufferInfo);
-        m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
-    }
-
-    // Write output storage image (binding 2)
-    {
-        vk::DescriptorImageInfo imageInfo;
-        imageInfo.imageView = *m_rtOutputImageView;
-        imageInfo.imageLayout = vk::ImageLayout::eGeneral;
-
-        vk::WriteDescriptorSet write;
-        write.dstSet = *m_rtDescriptorSet;
-        write.dstBinding = 2;
-        write.dstArrayElement = 0;
-        write.descriptorType = vk::DescriptorType::eStorageImage;
-        write.setImageInfo(imageInfo);
-        m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
-    }
-
-    LOG_INFO("RT descriptor set created");
+    LOG_INFO("RT resource descriptor set created");
 }
 
 // ── RT compute pipeline ───────────────────────────────────────────
@@ -913,8 +893,14 @@ void Application::createRtComputePipeline() {
         m_rtComputeShader = std::make_unique<ShaderModule>(
             ShaderModule::createComputeShader(m_vulkanDevice.get(), shaderPath));
 
+        vk::PushConstantRange pcRange;
+        pcRange.stageFlags = vk::ShaderStageFlagBits::eCompute;
+        pcRange.size = sizeof(RTGlobalConstants);
+
+        std::array<vk::DescriptorSetLayout, 2> setLayouts = {*m_perFrameSetLayout, *m_rtResourceSetLayout};
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
-        pipelineLayoutInfo.setSetLayouts(*m_rtDescriptorSetLayout);
+        pipelineLayoutInfo.setSetLayouts(setLayouts);
+        pipelineLayoutInfo.setPushConstantRanges(pcRange);
         m_rtPipelineLayout = m_vulkanDevice->get().createPipelineLayout(pipelineLayoutInfo);
 
         if (!m_pipelineManager) {
@@ -934,27 +920,23 @@ void Application::createRtComputePipeline() {
     }
 }
 
-// ── RT camera uniform buffers ─────────────────────────────────────
-
-void Application::createRtCameraUniformBuffers() {
-    createUniformBuffersImpl(sizeof(CameraData), m_rtCameraUniformBuffers, m_mappedRtCameraUniformData);
-    LOG_INFO("RT camera uniform buffers created");
-}
-
 // ── Sphere buffer (SSBO) ──────────────────────────────────────────
 
 void Application::createSphereBuffer() {
     if (m_spheres.empty()) {
         m_spheres.push_back({}); // ensure at least one entry for buffer creation
     }
-    // Host-visible for easy per-frame updates
-    m_sphereBuffer = std::make_unique<Buffer>(
-        Buffer::createBuffer(m_vulkanDevice.get(),
-            m_spheres.size() * sizeof(SphereData),
-            vk::BufferUsageFlagBits::eStorageBuffer,
-            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
-    m_sphereBuffer->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
-    m_spheresDirty = false;
+    for (size_t i = 0; i < m_framesInFlight; i++) {
+        // Host-visible for easy per-frame updates
+        auto sphereBuffer = std::make_unique<Buffer>(
+            Buffer::createBuffer(m_vulkanDevice.get(),
+                m_spheres.size() * sizeof(SphereData),
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+        sphereBuffer->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
+        m_sphereBuffers.emplace_back(std::move(sphereBuffer));
+    }
+    m_spheresDirty = 0;
     LOG_INFO("Sphere buffer created with " + std::to_string(m_spheres.size()) + " spheres");
 }
 
@@ -971,7 +953,7 @@ void Application::createFullscreenPipeline() {
             ShaderModule::createFragmentShader(m_vulkanDevice.get(), shaderPath));
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
-        pipelineLayoutInfo.setSetLayouts(*m_fullscreenDescriptorSetLayout);
+        pipelineLayoutInfo.setSetLayouts(*m_samplerSetLayout);
         m_fullscreenPipelineLayout = m_vulkanDevice->get().createPipelineLayout(pipelineLayoutInfo);
 
         if (!m_pipelineManager) {
@@ -1004,36 +986,26 @@ void Application::createFullscreenPipeline() {
 }
 
 void Application::createFullscreenDescriptorSet() {
-    // Layout for binding 0: combined image sampler of the RT output
-    vk::DescriptorSetLayoutBinding samplerBinding;
-    samplerBinding.binding = 0;
-    samplerBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-    samplerBinding.descriptorCount = 1;
-    samplerBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
-
-    vk::DescriptorSetLayoutCreateInfo layoutInfo;
-    layoutInfo.setBindings(samplerBinding);
-    m_fullscreenDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
-
-    // Allocate descriptor set from the main descriptor pool (which supports combined image sampler)
+    std::vector<vk::DescriptorSetLayout> layouts(m_framesInFlight, *m_samplerSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo;
-    allocInfo.descriptorPool = m_descriptorPool;
-    allocInfo.setSetLayouts(*m_fullscreenDescriptorSetLayout);
-    std::vector<vk::raii::DescriptorSet> sets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
-    m_fullscreenDescriptorSet = std::move(sets[0]);
+    allocInfo.descriptorPool = *m_descriptorPool;
+    allocInfo.setSetLayouts(layouts);
+    m_fullscreenDescriptorSets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
 
-    vk::DescriptorImageInfo imageInfo;
-    imageInfo.imageView = *m_rtOutputImageView;
-    imageInfo.sampler = *m_rtOutputSampler;
-    imageInfo.imageLayout = vk::ImageLayout::eGeneral;
+    for (size_t i = 0; i < m_framesInFlight; i++) {
+        vk::DescriptorImageInfo imageInfo;
+        imageInfo.imageView = *m_rtOutputImageViews[i];
+        imageInfo.sampler = *m_rtOutputSampler;
+        imageInfo.imageLayout = vk::ImageLayout::eGeneral;
 
-    vk::WriteDescriptorSet write;
-    write.dstSet = *m_fullscreenDescriptorSet;
-    write.dstBinding = 0;
-    write.dstArrayElement = 0;
-    write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
-    write.setImageInfo(imageInfo);
-    m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        vk::WriteDescriptorSet write;
+        write.dstSet = *m_fullscreenDescriptorSets[i];
+        write.dstBinding = 0;
+        write.dstArrayElement = 0;
+        write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        write.setImageInfo(imageInfo);
+        m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+    }
 
     LOG_INFO("Fullscreen descriptor set created");
 }
@@ -1048,7 +1020,7 @@ void Application::initSpheres() {
         glm::vec3(0.0f, -100.5f, 0.0f),  // center
         100.0f,                            // radius
         glm::vec4(0.3f, 0.5f, 0.3f, 1.0f), // color (greenish)
-        0.0f, 0.0f, 1.0f, 0.0f           // refl, refr, ior, pad
+        0.0f, 1.0f, 0.0f           // refl, ior, pad
     });
 
     // Center sphere
@@ -1056,7 +1028,7 @@ void Application::initSpheres() {
         glm::vec3(0.0f, 0.0f, 0.0f),
         1.0f,
         glm::vec4(0.9f, 0.3f, 0.2f, 1.0f), // red
-        0.0f, 0.0f, 1.5f, 0.0f
+        0.0f, 1.5f, 0.0f
     });
 
     // Left sphere
@@ -1064,7 +1036,7 @@ void Application::initSpheres() {
         glm::vec3(-2.5f, 0.0f, 0.5f),
         1.0f,
         glm::vec4(0.2f, 0.4f, 0.9f, 1.0f), // blue
-        0.0f, 0.0f, 1.5f, 0.0f
+        0.0f, 1.5f, 0.0f
     });
 
     // Right sphere
@@ -1072,7 +1044,7 @@ void Application::initSpheres() {
         glm::vec3(2.5f, 0.0f, 0.5f),
         1.0f,
         glm::vec4(0.9f, 0.8f, 0.1f, 1.0f), // yellow
-        0.0f, 0.0f, 1.5f, 0.0f
+        0.0f, 1.5f, 0.0f
     });
 
     // Small sphere on top
@@ -1080,26 +1052,22 @@ void Application::initSpheres() {
         glm::vec3(0.0f, 2.0f, 1.0f),
         0.6f,
         glm::vec4(0.8f, 0.2f, 0.7f, 1.0f), // pink
-        0.0f, 0.0f, 1.5f, 0.0f
+        0.0f, 1.5f, 0.0f
     });
 
-    m_spheresDirty = true;
+    setSpheresDirty();
     LOG_INFO("Default scene initialized with " + std::to_string(m_spheres.size()) + " spheres");
 }
 
 void Application::cleanupRtSwapChainResources() {
-    m_fullscreenDescriptorSet = nullptr;
-    m_fullscreenDescriptorSetLayout = nullptr;
+    m_fullscreenDescriptorSets.clear();
     m_fullscreenPipelineLayout = nullptr;
-    m_fullscreenVertShader.reset();
-    m_fullscreenFragShader.reset();
-
-    m_rtDescriptorSet = nullptr;
-
+    m_rtDescriptorSets.clear();
+    m_rtPipelineLayout = nullptr;
     m_rtOutputSampler = nullptr;
-    m_rtOutputImageView = nullptr;
-    m_rtOutputImage = nullptr;
-    m_rtOutputImageMemory = nullptr;
+    m_rtOutputImageViews.clear();
+    m_rtOutputImages.clear();
+    m_rtOutputImagesMemory.clear();
 }
 
 void Application::recreateSwapChain() {
@@ -1114,7 +1082,7 @@ void Application::recreateSwapChain() {
 
     m_swapChainManager->recreate(m_windowWidth, m_windowHeight);
     createRenderPass();
-    createDescriptorSetLayout();
+    createDescriptorSetLayouts();
     createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
@@ -1125,8 +1093,9 @@ void Application::recreateSwapChain() {
 
     // Recreate RT resources (size-dependent)
     createRtStorageImage();
-    createRtDescriptorSets();
-    createFullscreenDescriptorSet();  // creates layout + set (must be before pipeline)
+    createRtComputePipeline();
+    createRtResourceDescriptorSet();
+    createFullscreenDescriptorSet();
     createFullscreenPipeline();
 
     m_camera.SetAspectRatio(static_cast<float>(m_windowWidth) / m_windowHeight);
@@ -1142,6 +1111,9 @@ void Application::drawFrame() {
     ImGui::Begin("Transform");
 
     ImGui::SetWindowFontScale(1.4f);
+
+    ImGui::Text("FPS: %.1f", m_currentFps);
+    ImGui::Spacing();
 
     ImGui::Text("Camera");
     ImGui::Separator();
@@ -1172,52 +1144,35 @@ void Application::drawFrame() {
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Text("Light");
+    ImGui::Text("Point Lights");
     ImGui::Separator();
 
-    if (ImGui::CollapsingHeader("Point Light 1")) {
-        ImGui::DragFloat3("Position##pl1", glm::value_ptr(m_lights.pointLight1.pos), 0.1f);
-        ImGui::ColorEdit3("Color##pl1", glm::value_ptr(m_lights.pointLight1.color));
-        ImGui::DragFloat("Intensity##pl1", &m_lights.pointLight1.intensity, 0.1f, 0.0f, 100.0f);
-        ImGui::DragFloat("Max Distance##pl1", &m_lights.pointLight1.maxDistance, 0.1f, 0.0f, 100.0f);
+    for (int i = 0; i < static_cast<int>(m_pointLights.size()); i++) {
+        ImGui::PushID(i);
+        std::string header = "Light " + std::to_string(i);
+        if (ImGui::CollapsingHeader(header.c_str())) {
+            bool changed = false;
+            changed |= ImGui::DragFloat3("Position", glm::value_ptr(m_pointLights[i].position), 0.1f);
+            changed |= ImGui::ColorEdit3("Color", glm::value_ptr(m_pointLights[i].color));
+            changed |= ImGui::DragFloat("Intensity", &m_pointLights[i].intensity, 0.1f, 0.0f, 100.0f);
+            changed |= ImGui::DragFloat("Max Distance", &m_pointLights[i].maxDistance, 0.1f, 0.0f, 100.0f);
+            if (changed) {
+                setLightsDirty();
+            }
+        }
+        ImGui::PopID();
     }
-
-    if (ImGui::CollapsingHeader("Point Light 2")) {
-        ImGui::DragFloat3("Position##pl2", glm::value_ptr(m_lights.pointLight2.pos), 0.1f);
-        ImGui::ColorEdit3("Color##pl2", glm::value_ptr(m_lights.pointLight2.color));
-        ImGui::DragFloat("Intensity##pl2", &m_lights.pointLight2.intensity, 0.1f, 0.0f, 100.0f);
-        ImGui::DragFloat("Max Distance##pl2", &m_lights.pointLight2.maxDistance, 0.1f, 0.0f, 100.0f);
+    if (ImGui::Button("Add Light")) {
+        m_pointLights.push_back({{0.0f, 3.0f, 0.0f}, 10.0f, {1.0f, 1.0f, 1.0f}, 20.0f});
+        setLightsDirty();
     }
-
-    if (ImGui::CollapsingHeader("Spot Light")) {
-        ImGui::DragFloat3("Position##sl", glm::value_ptr(m_lights.spotLight.pos), 0.1f);
-        ImGui::DragFloat3("Direction##sl", glm::value_ptr(m_lights.spotLight.dir), 0.01f);
-        m_lights.spotLight.dir = glm::normalize(m_lights.spotLight.dir);
-        ImGui::ColorEdit3("Color##sl", glm::value_ptr(m_lights.spotLight.color));
-        float innerDeg = glm::degrees(acos(m_lights.spotLight.cosineInclinationAngle));
-        if (ImGui::DragFloat("Inner Angle##sl", &innerDeg, 0.1f, 0.1f, 90.0f))
-            m_lights.spotLight.cosineInclinationAngle = cos(glm::radians(innerDeg));
-        float outerDeg = glm::degrees(acos(m_lights.spotLight.cosineExclusivityAngle));
-        if (ImGui::DragFloat("Outer Angle##sl", &outerDeg, 0.1f, 0.1f, 90.0f))
-            m_lights.spotLight.cosineExclusivityAngle = cos(glm::radians(outerDeg));
-        ImGui::DragFloat("Intensity##sl", &m_lights.spotLight.intensity, 0.1f, 0.0f, 100.0f);
-        ImGui::DragFloat("Max Distance##sl", &m_lights.spotLight.maxDistance, 0.1f, 0.0f, 100.0f);
+    if (m_pointLights.size() > 1) {
+        ImGui::SameLine();
+        if (ImGui::Button("Remove Light")) {
+            m_pointLights.pop_back();
+            setLightsDirty();
+        }
     }
-
-    if (ImGui::CollapsingHeader("Directional Light")) {
-        ImGui::DragFloat3("Direction##dl", glm::value_ptr(m_lights.directionalLight.dir), 0.01f);
-        m_lights.directionalLight.dir = glm::normalize(m_lights.directionalLight.dir);
-        ImGui::ColorEdit3("Color##dl", glm::value_ptr(m_lights.directionalLight.color));
-        ImGui::DragFloat("Intensity##dl", &m_lights.directionalLight.intensity, 0.01f, 0.0f, 10.0f);
-    }
-
-    if (ImGui::CollapsingHeader("Ambient")) {
-        ImGui::ColorEdit3("Color##amb", glm::value_ptr(m_lights.ambientArgs));
-        ImGui::DragFloat("Strength##amb", &m_lights.ambientArgs.w, 0.01f, 0.0f, 1.0f);
-    }
-
-    ImGui::DragFloat("Diffuse Strength", &m_lights.diffuseStrength, 0.01f, 0.0f, 2.0f);
-    ImGui::DragFloat("Specular Strength", &m_lights.specularStrength, 0.01f, 0.0f, 2.0f);
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -1233,9 +1188,10 @@ void Application::drawFrame() {
             changed |= ImGui::DragFloat("Radius", &m_spheres[i].radius, 0.05f, 0.01f, 100.0f);
             changed |= ImGui::ColorEdit4("Color", glm::value_ptr(m_spheres[i].color));
             changed |= ImGui::DragFloat("Reflectivity", &m_spheres[i].reflectivity, 0.01f, 0.0f, 1.0f);
-            changed |= ImGui::DragFloat("Refractivity", &m_spheres[i].refractivity, 0.01f, 0.0f, 1.0f);
             changed |= ImGui::DragFloat("IOR", &m_spheres[i].indexOfRefraction, 0.01f, 0.1f, 5.0f);
-            if (changed) m_spheresDirty = true;
+            if (changed) {
+                setSpheresDirty();
+            }
         }
         ImGui::PopID();
     }
@@ -1270,7 +1226,9 @@ void Application::drawFrame() {
     }
     m_imagesInFlight[imageIndex] = *m_inFlightFences[m_currentFrame];
 
-    updateSphereBuffer();
+    updateUniformBuffer(m_currentFrame);
+    updateLightBuffer(m_currentFrame);
+    updateSphereBuffer(m_currentFrame);
 
     m_commandBuffers[m_currentFrame].reset();
 
@@ -1280,12 +1238,25 @@ void Application::drawFrame() {
     // ── Compute dispatch ──────────────────────────────────────
     m_commandBuffers[m_currentFrame].bindPipeline(vk::PipelineBindPoint::eCompute,
         *m_pipelineManager->getPipeline("rt_main"));
+    std::array<vk::DescriptorSet, 2> rtSets = {
+        *m_perFrameDescriptorSets[m_currentFrame],
+        *m_rtDescriptorSets[m_currentFrame]
+    };
     m_commandBuffers[m_currentFrame].bindDescriptorSets(
         vk::PipelineBindPoint::eCompute,
         *m_rtPipelineLayout,
         0,
-        *m_rtDescriptorSet,
+        rtSets,
         nullptr);
+
+    RTGlobalConstants rtPC{};
+    rtPC.sphereCount = static_cast<uint32_t>(m_spheres.size());
+    rtPC.lightCount = static_cast<uint32_t>(m_pointLights.size());
+    rtPC.ambientStrength = 0.1f;
+    rtPC.diffuseStrength = 0.5f;
+    rtPC.specularStrength = 1.0f;
+    m_commandBuffers[m_currentFrame].pushConstants<RTGlobalConstants>(
+        *m_rtPipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, rtPC);
 
     uint32_t groupX = (m_windowWidth  + 7) / 8;
     uint32_t groupY = (m_windowHeight + 7) / 8;
@@ -1296,7 +1267,7 @@ void Application::drawFrame() {
         vk::ImageMemoryBarrier barrier;
         barrier.setOldLayout(vk::ImageLayout::eGeneral);
         barrier.setNewLayout(vk::ImageLayout::eGeneral);
-        barrier.setImage(*m_rtOutputImage);
+        barrier.setImage(*m_rtOutputImages[m_currentFrame]);
         barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
         barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
         barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
@@ -1347,7 +1318,7 @@ void Application::drawFrame() {
         vk::PipelineBindPoint::eGraphics,
         *m_fullscreenPipelineLayout,
         0,
-        *m_fullscreenDescriptorSet,
+        *m_fullscreenDescriptorSets[m_currentFrame],
         nullptr);
 
     // Fullscreen triangle — 3 vertices, no vertex/index buffers
@@ -1378,6 +1349,16 @@ void Application::drawFrame() {
     }
 
     m_swapChainManager->presentImage(imageIndex, *m_renderFinishedSemaphores[m_currentFrame]);
+
+    // FPS calculation: update every second
+    m_fpsFrameCount++;
+    auto now = std::chrono::steady_clock::now();
+    float elapsed = std::chrono::duration<float>(now - m_fpsLastTime).count();
+    if (elapsed >= 1.0f) {
+        m_currentFps = static_cast<float>(m_fpsFrameCount) / elapsed;
+        m_fpsFrameCount = 0;
+        m_fpsLastTime = now;
+    }
 
     m_currentFrame = (m_currentFrame + 1) % m_framesInFlight;
 }
