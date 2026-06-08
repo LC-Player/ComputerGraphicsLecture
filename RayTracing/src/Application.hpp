@@ -33,6 +33,7 @@ namespace RYRayTracing {
 struct RTGlobalConstants {
     uint32_t sphereCount;
     uint32_t lightCount;
+    uint32_t materialCount;
     float ambientStrength;
     float diffuseStrength;
     float specularStrength;
@@ -72,7 +73,7 @@ private:
     vk::raii::DescriptorSetLayout m_samplerSetLayout = nullptr;
 
     /// Set 1 for the "rt_main" compute pipeline.
-    /// b0: sphere SSBO, b1: output storage image
+    /// b0: sphere SSBO, b1: output storage image, b2: material SSBO
     vk::raii::DescriptorSetLayout m_rtResourceSetLayout = nullptr;
 
     // ── Single descriptor pool (ImGui has its own) ───────────────
@@ -83,7 +84,7 @@ private:
     /// Per-frame sets (one per frame-in-flight): camera + light UBO.
     std::vector<vk::raii::DescriptorSet> m_perFrameDescriptorSets;
 
-    /// RT compute set: sphere SSBO + output storage image.
+    /// RT compute set: sphere SSBO + output storage image + material SSBO.
     std::vector<vk::raii::DescriptorSet> m_rtDescriptorSets;
 
     /// Fullscreen display set: RT output as combined image sampler.
@@ -121,6 +122,11 @@ private:
     // ── Scene primitives for RT ──────────────────────────────────
     std::vector<std::unique_ptr<Buffer>> m_sphereBuffers;
     std::vector<SphereData> m_spheres;
+    std::vector<std::unique_ptr<Buffer>> m_materialBuffers;
+    std::vector<MaterialData> m_materials;
+    int m_materialsDirty = m_framesInFlight;
+    bool isMaterialsDirty() { bool positive = m_materialsDirty > 0; m_materialsDirty -= positive; return positive; }
+    void setMaterialsDirty() { m_materialsDirty = m_framesInFlight; }
 
     // ── Framebuffers & depth ──────────────────────────────────
     std::vector<vk::raii::Framebuffer> m_swapChainFramebuffers;
@@ -198,12 +204,14 @@ private:
     void createRtComputePipeline();
     void createRtResourceDescriptorSet();  // sphere SSBO + output image
     void createSphereBuffer();
+    void createMaterialBuffer();
     void createFullscreenPipeline();
     void createFullscreenDescriptorSet();  // RT output as sampler
 
     void updateUniformBuffer(size_t currentFrame);
     void updateLightBuffer(size_t currentFrame);
     void updateSphereBuffer(size_t currentFrame);
+    void updateMaterialBuffer(size_t currentFrame);
 
     void drawFrame();
     void mainLoop();

@@ -32,6 +32,7 @@ struct PointLight {
 struct RTGlobalConstants {
     uint  sphereCount;
     uint  lightCount;
+    uint  materialCount;
     float ambientStrength;
     float diffuseStrength;
     float specularStrength;

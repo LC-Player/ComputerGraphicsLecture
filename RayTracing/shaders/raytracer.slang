@@ -8,13 +8,25 @@ struct CameraData {
     float4 position;       // camera world position (w unused)
 };
 
+struct Material {
+    float4 diffuseColor;
+    float reflectivity;    // 0.0 = diffuse, 1.0 = perfect mirror
+    float ior;             // index of refraction (e.g. 1.5)
+    float specularComponent; // specular exponent (shininess)
+    float diffuseWeight;     // 漫反射分量权重
+    float specularWeight;    // 镜面反射分量权重
+    float reflectionWeight;  // 反射分量权重
+    float refractionWeight;  // 折射分量权重
+    float _pad;
+};
+
 struct Sphere {
     float3 center;
     float radius;
-    float4 color;
-    float reflectivity;    // 0.0 = diffuse, 1.0 = perfect mirror
-    float ior;             // index of refraction (e.g. 1.5)
-    float _pad;
+    uint materialIndex;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 struct LightData {
@@ -34,14 +46,13 @@ struct HitResult {
     float t;               // distance along ray to hit point
     float3 point;          // world-space hit position
     float3 normal;         // surface normal at hit point
-    float4 color;          // surface color
-    float reflectivity;
-    float ior;
+    uint  materialIndex;   // index into material array
 };
 
 struct RTGlobalConstants {
     uint sphereCount;
     uint lightCount;
+    uint materialCount;
     float ambientStrength;
     float diffuseStrength;
     float specularStrength;
@@ -55,8 +66,9 @@ struct RTGlobalConstants {
 [[vk::binding(0, 0)]] ConstantBuffer<CameraData> camera;
 [[vk::binding(1, 0)]] StructuredBuffer<LightData> lights;
 // Set 1: RT-specific resources
-[[vk::binding(0, 1)]] StructuredBuffer<Sphere>   spheres;
+[[vk::binding(0, 1)]] StructuredBuffer<Sphere>    spheres;
 [[vk::binding(1, 1)]] RWTexture2D<float4>        outputImage;
+[[vk::binding(2, 1)]] StructuredBuffer<Material>  materials;
 
 // ── Ray-sphere intersection ───────────────────────────────────────
 
@@ -122,9 +134,7 @@ HitResult traceScene(Ray ray)
         result.t = t;
         result.point = ray.origin + t * ray.direction;
         result.normal = normalize(result.point - spheres[i].center);
-        result.color = spheres[i].color;
-        result.reflectivity = spheres[i].reflectivity;
-        result.ior = spheres[i].ior;
+        result.materialIndex = spheres[i].materialIndex;
     }
 
     //*****************************************************************
@@ -229,6 +239,8 @@ float3 castRay(Ray rayInitial) {
             // note: whitted style rt formula: sum contritions from local (diffuse, specular), reflection(mirror) and refraction
             //******************************************************************************************************************
 
+            Material mat = materials[hit.materialIndex];
+
             float diffuse_light_intensity = 0, specular_light_intensity = 0;
             for (uint i = 0; i < pc.lightCount; i++) {
                 float3 light_dir = normalize(lights[i].position - hit.point);
@@ -245,24 +257,24 @@ float3 castRay(Ray rayInitial) {
                 // local illumination: diffuse, specular
                 diffuse_light_intensity += lights[i].intensity * max(0.0, dot(light_dir, hit.normal));
                 specular_light_intensity += pow(
-                    max(0.0, 
+                    max(0.0,
                         -dot(reflect(-light_dir, hit.normal), ray.direction)),
-                    60 /* specular component, TODO */
+                    mat.specularComponent
                 ) * lights[i].intensity;
             }
-            float3 localShading = hit.color.xyz * diffuse_light_intensity * 0.1 /* material.albedo[0], TODO */
-                                  + specular_light_intensity * 0.8;             /* material.albedo[1], TODO */
+            float3 localShading = mat.diffuseColor.xyz * diffuse_light_intensity * mat.diffuseWeight
+                                  + specular_light_intensity * mat.specularWeight;
             color += throughput * localShading;
             //*************************************************************************************************************
             // Note: (1) recursive calling reflect() and refract() without conditioning
             //       (2) refract() use default value of refraction ray and recursive calling itself for changing inside-out
             //**************************************************************************************************************
             float3 reflect_dir = normalize(reflectDir(ray.direction, hit.normal));
-            float3 refract_dir = normalize(refractDir(ray.direction, hit.normal, hit.ior, 1.0));
+            float3 refract_dir = normalize(refractDir(ray.direction, hit.normal, mat.ior, 1.0));
             float3 reflect_orig = select( dot(reflect_dir, hit.normal) < 0, hit.point - hit.normal * 1e-3, hit.point + hit.normal * 1e-3); // offset the original point to avoid occlusion by the object itself
             float3 refract_orig = select(dot(refract_dir, hit.normal) < 0, hit.point - hit.normal * 1e-3, hit.point + hit.normal * 1e-3);
             if (depth < 4 && stackPtr < 8) {
-                float3 next_refract_throughput = throughput * 0.0; /* material.albedo[3] */ 
+                float3 next_refract_throughput = throughput * mat.refractionWeight;
                 if (any(next_refract_throughput > 0.0)) {
                     stack[stackPtr].ray = Ray(refract_orig, refract_dir);
                     stack[stackPtr].throughput = next_refract_throughput;
@@ -270,7 +282,7 @@ float3 castRay(Ray rayInitial) {
                     stackPtr += 1;
                 }
 
-                float3 next_reflect_throughput = throughput * 0.2; /* material.albedo[2] */
+                float3 next_reflect_throughput = throughput * mat.reflectionWeight;
                 if (stackPtr < 8) {
                     stack[stackPtr].ray = Ray(reflect_orig, reflect_dir);
                     stack[stackPtr].throughput = next_reflect_throughput;

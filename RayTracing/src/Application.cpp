@@ -56,9 +56,9 @@ void Application::run() {
     try {
         LOG_INFO("Starting Vulkan quad application");
 
+        initComponents();
         initVulkan();
         initImGui();
-        initComponents();
         mainLoop();
 
         LOG_INFO("Application completed successfully");
@@ -185,6 +185,7 @@ void Application::initVulkan() {
     createRtComputePipeline();
     initSpheres();
     createSphereBuffer();
+    createMaterialBuffer();
     createRtResourceDescriptorSet();
     createFullscreenDescriptorSet();
     createFullscreenPipeline();
@@ -249,6 +250,48 @@ void Application::initComponents() {
     m_pointLights.push_back({{4.0f, 4.0f, 4.0f}, 20.0f, {1.0f, 1.0f, 1.0f}, 30.0f});
     m_pointLights.push_back({{-4.0f, 4.0f, 4.0f}, 20.0f, {1.0f, 1.0f, 1.0f}, 30.0f});
     setLightsDirty();
+
+    m_materials.push_back({
+        glm::vec4(0.3f, 0.5f, 0.3f, 1.0f), // diffuseColor (greenish ground)
+        0.0f, 1.0f,                          // reflectivity, IOR
+        60.0f,                               // specularComponent
+        0.1f, 0.8f,                          // diffuseWeight, specularWeight
+        0.0f, 0.0f,                          // reflectionWeight, refractionWeight
+        0.0f                                 // _pad
+    });
+    m_materials.push_back({
+        glm::vec4(0.9f, 0.3f, 0.2f, 1.0f), // red
+        0.0f, 1.5f,
+        60.0f,
+        0.1f, 0.8f,
+        0.2f, 0.0f,
+        0.0f
+    });
+    m_materials.push_back({
+        glm::vec4(0.2f, 0.4f, 0.9f, 1.0f), // blue
+        0.0f, 1.5f,
+        60.0f,
+        0.1f, 0.8f,
+        0.2f, 0.0f,
+        0.0f
+    });
+    m_materials.push_back({
+        glm::vec4(0.9f, 0.8f, 0.1f, 1.0f), // yellow
+        0.0f, 1.5f,
+        60.0f,
+        0.1f, 0.8f,
+        0.2f, 0.0f,
+        0.0f
+    });
+    m_materials.push_back({
+        glm::vec4(0.8f, 0.2f, 0.7f, 1.0f), // pink
+        0.0f, 1.5f,
+        60.0f,
+        0.1f, 0.8f,
+        0.2f, 0.0f,
+        0.0f
+    });
+    setMaterialsDirty();
 }
 
 void Application::cleanup() {
@@ -385,9 +428,9 @@ void Application::createDescriptorSetLayouts() {
         m_samplerSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
     }
 
-    // RT resource: b0 = spheres SSBO, b1 = output storage image
+    // RT resource: b0 = spheres SSBO, b1 = output storage image, b2 = material SSBO
     {
-        std::array<vk::DescriptorSetLayoutBinding, 2> bindings;
+        std::array<vk::DescriptorSetLayoutBinding, 3> bindings;
         bindings[0].binding = 0;
         bindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         bindings[0].descriptorCount = 1;
@@ -397,6 +440,11 @@ void Application::createDescriptorSetLayouts() {
         bindings[1].descriptorType = vk::DescriptorType::eStorageImage;
         bindings[1].descriptorCount = 1;
         bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        bindings[2].binding = 2;
+        bindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[2].descriptorCount = 1;
+        bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo;
         layoutInfo.setBindings(bindings);
@@ -620,7 +668,7 @@ void Application::createDescriptorPool() {
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
     poolSizes[1].descriptorCount = modelCount + fif; // material textures + fullscreen per frame
     poolSizes[2].type = vk::DescriptorType::eStorageBuffer;
-    poolSizes[2].descriptorCount = fif * 2; // spheres + lights SSBO per frame
+    poolSizes[2].descriptorCount = fif * 3; // spheres + lights + materials SSBO per frame
     poolSizes[3].type = vk::DescriptorType::eStorageImage;
     poolSizes[3].descriptorCount = fif; // RT output per frame
 
@@ -726,6 +774,11 @@ void Application::updateSphereBuffer(size_t currentFrame) {
     m_sphereBuffers[currentFrame]->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
 }
 
+void Application::updateMaterialBuffer(size_t currentFrame) {
+    if (!isMaterialsDirty() || m_materials.empty()) return;
+    m_materialBuffers[currentFrame]->copyFrom(m_materials.data(), m_materials.size() * sizeof(MaterialData));
+}
+
 
 void Application::cleanupSwapChain() {
     m_perFrameDescriptorSets.clear();
@@ -753,6 +806,7 @@ void Application::cleanupSyncObjects() {
 void Application::cleanupRtResources() {
     cleanupRtSwapChainResources();
     m_sphereBuffers.clear();
+    m_materialBuffers.clear();
 }
 
 // ── RT storage image ──────────────────────────────────────────────
@@ -879,6 +933,22 @@ void Application::createRtResourceDescriptorSet() {
             write.setImageInfo(imageInfo);
             m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
         }
+
+        // b2: material SSBO
+        {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.buffer = *m_materialBuffers[i]->get();
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
+
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 2;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eStorageBuffer;
+            write.setBufferInfo(bufferInfo);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
     }
 
     LOG_INFO("RT resource descriptor set created");
@@ -938,6 +1008,25 @@ void Application::createSphereBuffer() {
     }
     m_spheresDirty = 0;
     LOG_INFO("Sphere buffer created with " + std::to_string(m_spheres.size()) + " spheres");
+}
+
+// ── Material buffer (SSBO) ─────────────────────────────────────────
+
+void Application::createMaterialBuffer() {
+    if (m_materials.empty()) {
+        m_materials.push_back({});
+    }
+    for (size_t i = 0; i < m_framesInFlight; i++) {
+        auto buf = std::make_unique<Buffer>(
+            Buffer::createBuffer(m_vulkanDevice.get(),
+                m_materials.size() * sizeof(MaterialData),
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+        buf->copyFrom(m_materials.data(), m_materials.size() * sizeof(MaterialData));
+        m_materialBuffers.emplace_back(std::move(buf));
+    }
+    m_materialsDirty = 0;
+    LOG_INFO("Material buffer created with " + std::to_string(m_materials.size()) + " materials");
 }
 
 // ── Fullscreen display pipeline ───────────────────────────────────
@@ -1015,44 +1104,44 @@ void Application::createFullscreenDescriptorSet() {
 void Application::initSpheres() {
     m_spheres.clear();
 
-    // Ground-like large sphere
+    // Ground-like large sphere (material 0)
     m_spheres.push_back({
-        glm::vec3(0.0f, -100.5f, 0.0f),  // center
-        100.0f,                            // radius
-        glm::vec4(0.3f, 0.5f, 0.3f, 1.0f), // color (greenish)
-        0.0f, 1.0f, 0.0f           // refl, ior, pad
+        glm::vec3(0.0f, -100.5f, 0.0f),
+        100.0f,
+        0,                     // materialIndex
+        {0.0f, 0.0f, 0.0f}    // _pad
     });
 
-    // Center sphere
+    // Center sphere (material 1)
     m_spheres.push_back({
         glm::vec3(0.0f, 0.0f, 0.0f),
         1.0f,
-        glm::vec4(0.9f, 0.3f, 0.2f, 1.0f), // red
-        0.0f, 1.5f, 0.0f
+        1,
+        {0.0f, 0.0f, 0.0f}
     });
 
-    // Left sphere
+    // Left sphere (material 2)
     m_spheres.push_back({
         glm::vec3(-2.5f, 0.0f, 0.5f),
         1.0f,
-        glm::vec4(0.2f, 0.4f, 0.9f, 1.0f), // blue
-        0.0f, 1.5f, 0.0f
+        2,
+        {0.0f, 0.0f, 0.0f}
     });
 
-    // Right sphere
+    // Right sphere (material 3)
     m_spheres.push_back({
         glm::vec3(2.5f, 0.0f, 0.5f),
         1.0f,
-        glm::vec4(0.9f, 0.8f, 0.1f, 1.0f), // yellow
-        0.0f, 1.5f, 0.0f
+        3,
+        {0.0f, 0.0f, 0.0f}
     });
 
-    // Small sphere on top
+    // Small sphere on top (material 4)
     m_spheres.push_back({
         glm::vec3(0.0f, 2.0f, 1.0f),
         0.6f,
-        glm::vec4(0.8f, 0.2f, 0.7f, 1.0f), // pink
-        0.0f, 1.5f, 0.0f
+        4,
+        {0.0f, 0.0f, 0.0f}
     });
 
     setSpheresDirty();
@@ -1094,6 +1183,7 @@ void Application::recreateSwapChain() {
     // Recreate RT resources (size-dependent)
     createRtStorageImage();
     createRtComputePipeline();
+    createMaterialBuffer();
     createRtResourceDescriptorSet();
     createFullscreenDescriptorSet();
     createFullscreenPipeline();
@@ -1186,11 +1276,38 @@ void Application::drawFrame() {
             bool changed = false;
             changed |= ImGui::DragFloat3("Center", glm::value_ptr(m_spheres[i].center), 0.05f);
             changed |= ImGui::DragFloat("Radius", &m_spheres[i].radius, 0.05f, 0.01f, 100.0f);
-            changed |= ImGui::ColorEdit4("Color", glm::value_ptr(m_spheres[i].color));
-            changed |= ImGui::DragFloat("Reflectivity", &m_spheres[i].reflectivity, 0.01f, 0.0f, 1.0f);
-            changed |= ImGui::DragFloat("IOR", &m_spheres[i].indexOfRefraction, 0.01f, 0.1f, 5.0f);
+            int matIdx = static_cast<int>(m_spheres[i].materialIndex);
+            if (ImGui::DragInt("Material Index", &matIdx, 1, 0, static_cast<int>(m_materials.size()) - 1)) {
+                m_spheres[i].materialIndex = static_cast<uint32_t>(matIdx);
+                changed = true;
+            }
             if (changed) {
                 setSpheresDirty();
+            }
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Materials");
+    ImGui::Separator();
+
+    for (int i = 0; i < static_cast<int>(m_materials.size()); i++) {
+        ImGui::PushID(i);
+        std::string header = "Material " + std::to_string(i);
+        if (ImGui::CollapsingHeader(header.c_str())) {
+            bool changed = false;
+            changed |= ImGui::ColorEdit4("Diffuse Color", glm::value_ptr(m_materials[i].diffuseColor));
+            changed |= ImGui::DragFloat("Reflectivity", &m_materials[i].reflectivity, 0.01f, 0.0f, 1.0f);
+            changed |= ImGui::DragFloat("IOR", &m_materials[i].indexOfRefraction, 0.01f, 0.1f, 5.0f);
+            changed |= ImGui::DragFloat("Specular Exp.", &m_materials[i].specularComponent, 0.5f, 1.0f, 500.0f);
+            changed |= ImGui::DragFloat("Diffuse Weight", &m_materials[i].diffuseWeight, 0.01f, 0.0f, 1.0f);
+            changed |= ImGui::DragFloat("Specular Weight", &m_materials[i].specularWeight, 0.01f, 0.0f, 1.0f);
+            changed |= ImGui::DragFloat("Reflection Weight", &m_materials[i].reflectionWeight, 0.01f, 0.0f, 1.0f);
+            changed |= ImGui::DragFloat("Refraction Weight", &m_materials[i].refractionWeight, 0.01f, 0.0f, 1.0f);
+            if (changed) {
+                setMaterialsDirty();
             }
         }
         ImGui::PopID();
@@ -1229,6 +1346,7 @@ void Application::drawFrame() {
     updateUniformBuffer(m_currentFrame);
     updateLightBuffer(m_currentFrame);
     updateSphereBuffer(m_currentFrame);
+    updateMaterialBuffer(m_currentFrame);
 
     m_commandBuffers[m_currentFrame].reset();
 
@@ -1252,6 +1370,7 @@ void Application::drawFrame() {
     RTGlobalConstants rtPC{};
     rtPC.sphereCount = static_cast<uint32_t>(m_spheres.size());
     rtPC.lightCount = static_cast<uint32_t>(m_pointLights.size());
+    rtPC.materialCount = static_cast<uint32_t>(m_materials.size());
     rtPC.ambientStrength = 0.1f;
     rtPC.diffuseStrength = 0.5f;
     rtPC.specularStrength = 1.0f;
