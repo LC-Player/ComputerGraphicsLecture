@@ -130,13 +130,18 @@ void VulkanDevice::createLogicalDevice(vk::raii::SurfaceKHR& surface) {
                             __FUNCTION__, __FILE__, __LINE__);
     }
 
+    // Enable shaderDrawParameters for SV_VertexID in vertex shaders
+    vk::PhysicalDeviceVulkan11Features vulkan11Features{};
+    vulkan11Features.shaderDrawParameters = VK_TRUE;
+
     // Device create info
     vk::DeviceCreateInfo createInfo{
         {},
         queueCreateInfos,
         {},  // No validation layers at device level (deprecated)
         config.requiredExtensions,
-        &config.requiredFeatures
+        &config.requiredFeatures,
+        &vulkan11Features
     };
 
     try {

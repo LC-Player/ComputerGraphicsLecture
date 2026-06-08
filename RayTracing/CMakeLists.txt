@@ -166,9 +166,40 @@ function (add_slang_shader_target TARGET)
     add_custom_target (${TARGET} DEPENDS ${SPV_FILES})
 endfunction()
 
+function (add_slang_compute_target TARGET)
+    cmake_parse_arguments ("SHADER" "" "ENTRY" "SOURCES" ${ARGN})
+    set(SPV_FILES "")
+
+    foreach (SOURCE_FILE ${SHADER_SOURCES})
+        get_filename_component(FILE_NAME ${SOURCE_FILE} NAME_WE)
+        set(OUTPUT_SPV ${SHADERS_COMPILE_DIR}/${FILE_NAME}.spv)
+        list(APPEND SPV_FILES ${OUTPUT_SPV})
+
+        add_custom_command (
+            OUTPUT ${OUTPUT_SPV}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_COMPILE_DIR}
+            COMMAND ${SLANGC_EXECUTABLE} ${SOURCE_FILE}
+                    -target spirv -profile spirv_1_4
+                    -emit-spirv-directly -fvk-use-entrypoint-name
+                    -entry ${SHADER_ENTRY} -o ${FILE_NAME}.spv
+            WORKING_DIRECTORY ${SHADERS_COMPILE_DIR}
+            DEPENDS ${SOURCE_FILE}
+            COMMENT "Compiling Slang compute shader ${SOURCE_FILE} -> ${OUTPUT_SPV}"
+            VERBATIM
+        )
+    endforeach()
+
+    add_custom_target (${TARGET} DEPENDS ${SPV_FILES})
+endfunction()
+
 file(GLOB SHADER_SLANG_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang)
+list(FILTER SHADER_SLANG_SOURCES EXCLUDE REGEX "raytracer\\.slang$")
 
 add_slang_shader_target(RayTracing_ShaderAssetsCompiling SOURCES ${SHADER_SLANG_SOURCES})
 
-add_dependencies(RayTracing_CopyShadersToFinal RayTracing_ShaderAssetsCompiling)
+add_slang_compute_target(RayTracing_ComputeShaderAssetsCompiling
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/shaders/raytracer.slang
+    ENTRY computeMain)
+
+add_dependencies(RayTracing_CopyShadersToFinal RayTracing_ShaderAssetsCompiling RayTracing_ComputeShaderAssetsCompiling)
 add_dependencies(RayTracing RayTracing_CopyShadersToFinal)

@@ -26,11 +26,11 @@ vk::raii::Pipeline& PipelineManager::createPipeline(const std::string& name, con
             config.fragmentShader, vk::ShaderStageFlagBits::eFragment, config.fragmentEntryPoint));
     }
 
-    // Vertex input state
+    // Vertex input state (empty bindings = no vertex buffer, e.g. fullscreen quad)
     vk::PipelineVertexInputStateCreateInfo vertexInputInfo;
     if (!config.vertexBindingDescriptions.empty()) {
         vertexInputInfo.setVertexBindingDescriptions(config.vertexBindingDescriptions);
-    } else {
+    } else if (config.vertexBindingDescription.binding != 0 || config.vertexBindingDescription.stride != 0) {
         vertexInputInfo.setVertexBindingDescriptions({ config.vertexBindingDescription });
     }
     vertexInputInfo.setVertexAttributeDescriptions(config.vertexAttributeDescriptions);
@@ -119,6 +119,33 @@ vk::raii::Pipeline& PipelineManager::createPipeline(const std::string& name, con
     } catch (const vk::SystemError& e) {
         throw VulkanException(e.code(),
                             std::string("Failed to create graphics pipeline: ") + e.what(),
+                            __FUNCTION__, __FILE__, __LINE__);
+    }
+}
+
+vk::raii::Pipeline& PipelineManager::createComputePipeline(const std::string& name, const ComputePipelineConfig& config) {
+    if (hasPipeline(name)) {
+        LOG_WARNING("Pipeline '" + name + "' already exists, destroying old pipeline");
+        destroyPipeline(name);
+    }
+
+    vk::PipelineShaderStageCreateInfo shaderStage;
+    shaderStage.setStage(vk::ShaderStageFlagBits::eCompute);
+    shaderStage.setModule(config.shaderModule);
+    shaderStage.setPName(config.entryPoint.c_str());
+
+    vk::ComputePipelineCreateInfo pipelineInfo;
+    pipelineInfo.setStage(shaderStage);
+    pipelineInfo.setLayout(config.layout);
+
+    try {
+        auto result = device.createComputePipelines(nullptr, pipelineInfo);
+        auto [it, success] = pipelines.emplace(name, std::move(result[0]));
+        LOG_DEBUG("Compute pipeline '" + name + "' created successfully");
+        return it->second;
+    } catch (const vk::SystemError& e) {
+        throw VulkanException(e.code(),
+                            std::string("Failed to create compute pipeline: ") + e.what(),
                             __FUNCTION__, __FILE__, __LINE__);
     }
 }

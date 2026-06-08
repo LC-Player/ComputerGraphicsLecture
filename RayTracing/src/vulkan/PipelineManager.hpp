@@ -53,10 +53,16 @@ struct PipelineConfig {
     uint32_t subpass = 0;
 };
 
+struct ComputePipelineConfig {
+    vk::ShaderModule shaderModule = nullptr;
+    std::string entryPoint = "computeMain";
+    vk::PipelineLayout layout = nullptr;
+};
+
 /**
  * @brief Pipeline manager using vk::raii
  *
- * Manages Vulkan graphics pipeline creation and caching.
+ * Manages Vulkan graphics pipeline and compute pipeline creation and caching.
  */
 class PipelineManager {
 public:
@@ -94,6 +100,15 @@ public:
      * @return vk::raii::Pipeline& Graphics pipeline
      */
     vk::raii::Pipeline& createPipeline(const std::string& name, const PipelineConfig& config);
+
+    /**
+     * @brief Create a compute pipeline
+     *
+     * @param name Pipeline name for caching
+     * @param config Compute pipeline configuration
+     * @return vk::raii::Pipeline& Compute pipeline
+     */
+    vk::raii::Pipeline& createComputePipeline(const std::string& name, const ComputePipelineConfig& config);
 
     /**
      * @brief Get a cached pipeline by name

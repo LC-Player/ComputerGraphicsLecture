@@ -24,8 +24,8 @@ public:
 	};
 public:
 	SceneCamera();
-	SceneCamera(glm::mat4 projection) : Camera(projection) {}
-	virtual ~SceneCamera() = default;
+	explicit SceneCamera(const glm::mat4& projection) : Camera(projection) {}
+	~SceneCamera() override = default;
 
 	void SetViewportAspectRatio(uint32_t width, uint32_t height);
 	void SetAspectRatio(float aspectRatio) { m_AspectRatio = aspectRatio; RecalculateProjection(); }
@@ -82,5 +82,6 @@ inline const std::pair<SceneCamera::ProjectionType, const char*> ProjectionTypeM
 
 struct CameraData {
 	glm::mat4 viewProj;
-	glm::vec4 position; // z for padding
+	glm::mat4 invViewProj; // inverse(viewProj) for ray direction generation in RT
+	glm::vec4 position;    // camera world position (w unused)
 };

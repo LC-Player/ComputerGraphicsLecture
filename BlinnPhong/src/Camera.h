@@ -24,7 +24,7 @@ public:
 	};
 public:
 	SceneCamera();
-	SceneCamera(glm::mat4 projection) : Camera(projection) {}
+	SceneCamera(const glm::mat4& projection) : Camera(projection) {}
 	virtual ~SceneCamera() = default;
 
 	void SetViewportAspectRatio(uint32_t width, uint32_t height);

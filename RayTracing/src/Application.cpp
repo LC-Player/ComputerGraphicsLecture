@@ -19,7 +19,6 @@
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/type_ptr.hpp>
-#include <iostream>
 #include <vector>
 #include <array>
 #include <thread>
@@ -28,6 +27,7 @@
 
 #include "imgui_internal.h"
 #include "Light.h"
+#include "Scene.h"
 
 namespace RYRayTracing {
 
@@ -166,7 +166,7 @@ void Application::initVulkan() {
     createSwapChain();
     createRenderPass();
     createDescriptorSetLayout();
-    createGraphicsPipeline();
+    createGraphicsPipeline(); // pipeline needs descriptor set layout
     createDepthResources();
     createFramebuffers();
     createCommandPool();
@@ -177,7 +177,18 @@ void Application::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    LOG_INFO("Full rendering pipeline initialized");
+    createRtStorageImage();
+    createRtDescriptorSetLayout();
+    createRtDescriptorPool();
+    createRtComputePipeline();
+    createRtCameraUniformBuffers();
+    initSpheres();
+    createSphereBuffer();
+    createRtDescriptorSets();
+    createFullscreenDescriptorSet();  // creates layout + set (must be before pipeline)
+    createFullscreenPipeline();
+
+    LOG_INFO("Full rendering pipeline initialized (RT compute + display)");
 }
 
 void Application::initImGui() {
@@ -225,6 +236,7 @@ void Application::initImGui() {
     m_vulkanDevice->getGraphicsQueue().waitIdle();
 
     ImGui_ImplVulkan_DestroyFontUploadObjects();
+    m_imguiInitialized = true;
 }
 
 void Application::initComponents() {
@@ -267,14 +279,16 @@ void Application::cleanup() {
         m_vulkanDevice->waitIdle();
     }
 
-    ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    if (m_imguiInitialized) {
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+    }
 
     cleanupSwapChain();
     cleanupSyncObjects();
+    cleanupRtResources();
 
-    m_mappedCameraUniformData.clear();
     m_mappedLightUniformData.clear();
 
     m_commandBuffers.clear();
@@ -286,7 +300,6 @@ void Application::cleanup() {
     m_pipelineLayout = nullptr;
     m_fragmentShader.reset();
     m_vertexShader.reset();
-    m_cameraUniformBuffers.clear();
     m_lightUniformBuffers.clear();
     m_instances.clear();
     m_models.clear();
@@ -412,7 +425,9 @@ void Application::createGraphicsPipeline() {
         m_pipelineLayout = m_vulkanDevice->get().createPipelineLayout(pipelineLayoutInfo);
         LOG_INFO("Pipeline layout created");
 
-        m_pipelineManager = std::make_unique<PipelineManager>(m_vulkanDevice->get());
+        if (!m_pipelineManager) {
+            m_pipelineManager = std::make_unique<PipelineManager>(m_vulkanDevice->get());
+        }
 
         PipelineConfig pipelineConfig;
         pipelineConfig.vertexShader = *m_vertexShader->get();
@@ -488,7 +503,6 @@ void Application::createUniformBuffers() {
     LOG_INFO("Creating uniform buffers...");
 
     m_framesInFlight = m_swapChainManager->getImageCount();
-    createUniformBuffersImpl(sizeof(CameraData), m_cameraUniformBuffers, m_mappedCameraUniformData);
     createUniformBuffersImpl(sizeof(LightInfo), m_lightUniformBuffers, m_mappedLightUniformData);
     LOG_INFO("Uniform buffers created");
 }
@@ -576,11 +590,11 @@ void Application::createDescriptorPool() {
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
     poolSizes[0].descriptorCount = static_cast<uint32_t>(m_framesInFlight) * 2; /* one for camera, one for light */
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = modelCount;
+    poolSizes[1].descriptorCount = modelCount + 1; // +1 for fullscreen RT display set
 
     vk::DescriptorPoolCreateInfo poolInfo;
     poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = static_cast<uint32_t>(m_framesInFlight) + modelCount;
+    poolInfo.maxSets = static_cast<uint32_t>(m_framesInFlight) + modelCount + 1; // +1 for fullscreen # descriptor set
     poolInfo.setPoolSizes(poolSizes);
     m_descriptorPool = m_vulkanDevice->get().createDescriptorPool(poolInfo);
 
@@ -597,22 +611,10 @@ void Application::createDescriptorSets() {
     m_uboDescriptorSets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
 
     for (size_t i = 0; i < m_framesInFlight; ++i) {
-        vk::DescriptorBufferInfo cameraBufferInfo;
-        cameraBufferInfo.buffer = *m_cameraUniformBuffers[i]->get();
-        cameraBufferInfo.offset = 0;
-        cameraBufferInfo.range = sizeof(CameraData);
-
         vk::DescriptorBufferInfo lightBufferInfo;
         lightBufferInfo.buffer = *m_lightUniformBuffers[i]->get();
         lightBufferInfo.offset = 0;
         lightBufferInfo.range = sizeof(LightInfo);
-
-        vk::WriteDescriptorSet cameraDescriptorWrite;
-        cameraDescriptorWrite.dstSet = m_uboDescriptorSets[i];
-        cameraDescriptorWrite.dstBinding = 0;
-        cameraDescriptorWrite.dstArrayElement = 0;
-        cameraDescriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
-        cameraDescriptorWrite.setBufferInfo(cameraBufferInfo);
 
         vk::WriteDescriptorSet lightDescriptorWrite;
         lightDescriptorWrite.dstSet = m_uboDescriptorSets[i];
@@ -621,7 +623,7 @@ void Application::createDescriptorSets() {
         lightDescriptorWrite.descriptorType = vk::DescriptorType::eUniformBuffer;
         lightDescriptorWrite.setBufferInfo(lightBufferInfo);
 
-        m_vulkanDevice->get().updateDescriptorSets(std::array<vk::WriteDescriptorSet, 2>{cameraDescriptorWrite, lightDescriptorWrite}, nullptr);
+        m_vulkanDevice->get().updateDescriptorSets(std::array{lightDescriptorWrite}, nullptr);
     }
 
     for (auto& model : m_models) {
@@ -664,10 +666,16 @@ void Application::createSyncObjects() {
 }
 
 void Application::updateUniformBuffer(size_t currentFrame) {
-    CameraData data{m_camera.GetViewProj() * glm::inverse(m_cameraTransform()), glm::vec4(m_cameraTransform.translation, 0)};
-    memcpy(m_mappedCameraUniformData[currentFrame], &data, sizeof(data));
-
+    glm::mat4 viewProj = m_camera.GetViewProj() * glm::inverse(m_cameraTransform());
+    CameraData data{viewProj, glm::inverse(viewProj), glm::vec4(m_cameraTransform.translation, float(m_spheres.size()))};
+    memcpy(m_mappedRtCameraUniformData[currentFrame], &data, sizeof(data));
     memcpy(m_mappedLightUniformData[currentFrame], &m_lights, sizeof(LightInfo));
+}
+
+void Application::updateSphereBuffer() {
+    if (m_spheres.empty()) return;
+    m_sphereBuffer->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
+    m_spheresDirty = false;
 }
 
 
@@ -690,6 +698,410 @@ void Application::cleanupSyncObjects() {
     m_imagesInFlight.clear();
 }
 
+// ── RT resource cleanup ───────────────────────────────────────────
+
+void Application::cleanupRtResources() {
+    cleanupRtSwapChainResources();
+
+    m_rtDescriptorPool = nullptr;
+    m_rtDescriptorSetLayout = nullptr;
+    m_rtPipelineLayout = nullptr;
+    m_rtComputeShader.reset();
+
+    m_sphereBuffer.reset();
+    m_rtCameraUniformBuffers.clear();
+    m_mappedRtCameraUniformData.clear();
+
+}
+
+// ── RT storage image ──────────────────────────────────────────────
+
+void Application::createRtStorageImage() {
+    vk::ImageCreateInfo imageInfo;
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent.width = m_windowWidth;
+    imageInfo.extent.height = m_windowHeight;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = vk::Format::eR8G8B8A8Unorm;
+    imageInfo.tiling = vk::ImageTiling::eOptimal;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled;
+    imageInfo.sharingMode = vk::SharingMode::eExclusive;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+
+    m_rtOutputImage = m_vulkanDevice->get().createImage(imageInfo);
+
+    auto memReqs = m_rtOutputImage.getMemoryRequirements();
+    vk::MemoryAllocateInfo allocInfo;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = m_vulkanDevice->findMemoryType(
+        memReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal);
+    m_rtOutputImageMemory = m_vulkanDevice->get().allocateMemory(allocInfo);
+    m_rtOutputImage.bindMemory(*m_rtOutputImageMemory, 0);
+
+    // Transition to GENERAL layout once (compute writes + fragment reads both use GENERAL)
+    {
+        vk::CommandBuffer cmd = m_commandBuffers[0];
+        cmd.reset();
+        vk::CommandBufferBeginInfo beginInfo;
+        cmd.begin(beginInfo);
+
+        vk::ImageMemoryBarrier barrier;
+        barrier.setOldLayout(vk::ImageLayout::eUndefined);
+        barrier.setNewLayout(vk::ImageLayout::eGeneral);
+        barrier.setImage(*m_rtOutputImage);
+        barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+        barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+        barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.setSrcAccessMask(vk::AccessFlagBits::eNone);
+        barrier.setDstAccessMask(vk::AccessFlagBits::eShaderWrite);
+
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTopOfPipe,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {}, nullptr, nullptr, barrier);
+        cmd.end();
+
+        vk::SubmitInfo submitInfo;
+        submitInfo.setCommandBuffers(cmd);
+        m_vulkanDevice->getGraphicsQueue().submit(submitInfo, nullptr);
+        m_vulkanDevice->waitIdle();
+    }
+
+    vk::ImageViewCreateInfo viewInfo;
+    viewInfo.image = *m_rtOutputImage;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = vk::Format::eR8G8B8A8Unorm;
+    viewInfo.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+    m_rtOutputImageView = m_vulkanDevice->get().createImageView(viewInfo);
+
+    vk::SamplerCreateInfo samplerInfo;
+    samplerInfo.magFilter = vk::Filter::eLinear;
+    samplerInfo.minFilter = vk::Filter::eLinear;
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+    m_rtOutputSampler = m_vulkanDevice->get().createSampler(samplerInfo);
+
+    LOG_INFO("RT storage image created: " + std::to_string(m_windowWidth) + "x" + std::to_string(m_windowHeight));
+}
+
+// ── RT descriptor set layout ──────────────────────────────────────
+
+void Application::createRtDescriptorSetLayout() {
+    // binding 0: CameraData UBO
+    vk::DescriptorSetLayoutBinding cameraBinding;
+    cameraBinding.binding = 0;
+    cameraBinding.descriptorType = vk::DescriptorType::eUniformBuffer;
+    cameraBinding.descriptorCount = 1;
+    cameraBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    // binding 1: Spheres SSBO
+    vk::DescriptorSetLayoutBinding sphereBinding;
+    sphereBinding.binding = 1;
+    sphereBinding.descriptorType = vk::DescriptorType::eStorageBuffer;
+    sphereBinding.descriptorCount = 1;
+    sphereBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    // binding 2: Output storage image
+    vk::DescriptorSetLayoutBinding imageBinding;
+    imageBinding.binding = 2;
+    imageBinding.descriptorType = vk::DescriptorType::eStorageImage;
+    imageBinding.descriptorCount = 1;
+    imageBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    std::array<vk::DescriptorSetLayoutBinding, 3> bindings = {cameraBinding, sphereBinding, imageBinding};
+    vk::DescriptorSetLayoutCreateInfo layoutInfo;
+    layoutInfo.setBindings(bindings);
+    m_rtDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
+
+    LOG_INFO("RT descriptor set layout created");
+}
+
+void Application::createRtDescriptorPool() {
+    std::array<vk::DescriptorPoolSize, 3> poolSizes;
+    poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
+    poolSizes[0].descriptorCount = 1;
+    poolSizes[1].type = vk::DescriptorType::eStorageBuffer;
+    poolSizes[1].descriptorCount = 1;
+    poolSizes[2].type = vk::DescriptorType::eStorageImage;
+    poolSizes[2].descriptorCount = 1;
+
+    vk::DescriptorPoolCreateInfo poolInfo;
+    poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    poolInfo.maxSets = 1;
+    poolInfo.setPoolSizes(poolSizes);
+    m_rtDescriptorPool = m_vulkanDevice->get().createDescriptorPool(poolInfo);
+
+    LOG_INFO("RT descriptor pool created");
+}
+
+void Application::createRtDescriptorSets() {
+    std::vector<vk::DescriptorSetLayout> layouts(1, *m_rtDescriptorSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo;
+    allocInfo.descriptorPool = m_rtDescriptorPool;
+    allocInfo.setSetLayouts(layouts);
+    std::vector<vk::raii::DescriptorSet> sets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
+    m_rtDescriptorSet = std::move(sets[0]);
+
+    // Write camera UBO (binding 0)
+    {
+        vk::DescriptorBufferInfo bufferInfo;
+        bufferInfo.buffer = *m_rtCameraUniformBuffers[0]->get();
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(CameraData);
+
+        vk::WriteDescriptorSet write;
+        write.dstSet = *m_rtDescriptorSet;
+        write.dstBinding = 0;
+        write.dstArrayElement = 0;
+        write.descriptorType = vk::DescriptorType::eUniformBuffer;
+        write.setBufferInfo(bufferInfo);
+        m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+    }
+
+    // Write spheres SSBO (binding 1)
+    {
+        vk::DescriptorBufferInfo bufferInfo;
+        bufferInfo.buffer = *m_sphereBuffer->get();
+        bufferInfo.offset = 0;
+        bufferInfo.range = VK_WHOLE_SIZE;
+
+        vk::WriteDescriptorSet write;
+        write.dstSet = *m_rtDescriptorSet;
+        write.dstBinding = 1;
+        write.dstArrayElement = 0;
+        write.descriptorType = vk::DescriptorType::eStorageBuffer;
+        write.setBufferInfo(bufferInfo);
+        m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+    }
+
+    // Write output storage image (binding 2)
+    {
+        vk::DescriptorImageInfo imageInfo;
+        imageInfo.imageView = *m_rtOutputImageView;
+        imageInfo.imageLayout = vk::ImageLayout::eGeneral;
+
+        vk::WriteDescriptorSet write;
+        write.dstSet = *m_rtDescriptorSet;
+        write.dstBinding = 2;
+        write.dstArrayElement = 0;
+        write.descriptorType = vk::DescriptorType::eStorageImage;
+        write.setImageInfo(imageInfo);
+        m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+    }
+
+    LOG_INFO("RT descriptor set created");
+}
+
+// ── RT compute pipeline ───────────────────────────────────────────
+
+void Application::createRtComputePipeline() {
+    try {
+        std::string shaderPath = "shaders/raytracer.spv";
+        LOG_INFO("Loading RT compute shader: " + shaderPath);
+        m_rtComputeShader = std::make_unique<ShaderModule>(
+            ShaderModule::createComputeShader(m_vulkanDevice.get(), shaderPath));
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+        pipelineLayoutInfo.setSetLayouts(*m_rtDescriptorSetLayout);
+        m_rtPipelineLayout = m_vulkanDevice->get().createPipelineLayout(pipelineLayoutInfo);
+
+        if (!m_pipelineManager) {
+            m_pipelineManager = std::make_unique<PipelineManager>(m_vulkanDevice->get());
+        }
+
+        ComputePipelineConfig config;
+        config.shaderModule = *m_rtComputeShader->get();
+        config.entryPoint = "computeMain";
+        config.layout = *m_rtPipelineLayout;
+
+        m_pipelineManager->createComputePipeline("rt_main", config);
+        LOG_INFO("RT compute pipeline created");
+    } catch (const std::exception& e) {
+        LOG_ERROR("Failed to create RT compute pipeline: " + std::string(e.what()));
+        throw;
+    }
+}
+
+// ── RT camera uniform buffers ─────────────────────────────────────
+
+void Application::createRtCameraUniformBuffers() {
+    createUniformBuffersImpl(sizeof(CameraData), m_rtCameraUniformBuffers, m_mappedRtCameraUniformData);
+    LOG_INFO("RT camera uniform buffers created");
+}
+
+// ── Sphere buffer (SSBO) ──────────────────────────────────────────
+
+void Application::createSphereBuffer() {
+    if (m_spheres.empty()) {
+        m_spheres.push_back({}); // ensure at least one entry for buffer creation
+    }
+    // Host-visible for easy per-frame updates
+    m_sphereBuffer = std::make_unique<Buffer>(
+        Buffer::createBuffer(m_vulkanDevice.get(),
+            m_spheres.size() * sizeof(SphereData),
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+    m_sphereBuffer->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
+    m_spheresDirty = false;
+    LOG_INFO("Sphere buffer created with " + std::to_string(m_spheres.size()) + " spheres");
+}
+
+// ── Fullscreen display pipeline ───────────────────────────────────
+
+void Application::createFullscreenPipeline() {
+    try {
+        std::string shaderPath = "shaders/fullscreen.spv";
+        LOG_INFO("Loading fullscreen shader: " + shaderPath);
+
+        m_fullscreenVertShader = std::make_unique<ShaderModule>(
+            ShaderModule::createVertexShader(m_vulkanDevice.get(), shaderPath));
+        m_fullscreenFragShader = std::make_unique<ShaderModule>(
+            ShaderModule::createFragmentShader(m_vulkanDevice.get(), shaderPath));
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+        pipelineLayoutInfo.setSetLayouts(*m_fullscreenDescriptorSetLayout);
+        m_fullscreenPipelineLayout = m_vulkanDevice->get().createPipelineLayout(pipelineLayoutInfo);
+
+        if (!m_pipelineManager) {
+            m_pipelineManager = std::make_unique<PipelineManager>(m_vulkanDevice->get());
+        }
+
+        PipelineConfig config;
+        config.vertexShader = *m_fullscreenVertShader->get();
+        config.fragmentShader = *m_fullscreenFragShader->get();
+        config.vertexEntryPoint = "vertMain";
+        config.fragmentEntryPoint = "fragMain";
+        config.pipelineLayout = *m_fullscreenPipelineLayout;
+        config.renderPass = *m_renderPassManager->get();
+        config.topology = vk::PrimitiveTopology::eTriangleList;
+        config.depthTestEnable = false;
+        config.depthWriteEnable = false;
+        config.blendEnable = false;
+
+        // No vertex buffer — shader generates vertices from SV_VertexID
+        config.vertexBindingDescription = vk::VertexInputBindingDescription{};
+        config.vertexBindingDescriptions.clear();
+        config.vertexAttributeDescriptions.clear();
+
+        m_pipelineManager->createPipeline("fullscreen", config);
+        LOG_INFO("Fullscreen pipeline created");
+    } catch (const std::exception& e) {
+        LOG_ERROR("Failed to create fullscreen pipeline: " + std::string(e.what()));
+        throw;
+    }
+}
+
+void Application::createFullscreenDescriptorSet() {
+    // Layout for binding 0: combined image sampler of the RT output
+    vk::DescriptorSetLayoutBinding samplerBinding;
+    samplerBinding.binding = 0;
+    samplerBinding.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    samplerBinding.descriptorCount = 1;
+    samplerBinding.stageFlags = vk::ShaderStageFlagBits::eFragment;
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo;
+    layoutInfo.setBindings(samplerBinding);
+    m_fullscreenDescriptorSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
+
+    // Allocate descriptor set from the main descriptor pool (which supports combined image sampler)
+    vk::DescriptorSetAllocateInfo allocInfo;
+    allocInfo.descriptorPool = m_descriptorPool;
+    allocInfo.setSetLayouts(*m_fullscreenDescriptorSetLayout);
+    std::vector<vk::raii::DescriptorSet> sets = m_vulkanDevice->get().allocateDescriptorSets(allocInfo);
+    m_fullscreenDescriptorSet = std::move(sets[0]);
+
+    vk::DescriptorImageInfo imageInfo;
+    imageInfo.imageView = *m_rtOutputImageView;
+    imageInfo.sampler = *m_rtOutputSampler;
+    imageInfo.imageLayout = vk::ImageLayout::eGeneral;
+
+    vk::WriteDescriptorSet write;
+    write.dstSet = *m_fullscreenDescriptorSet;
+    write.dstBinding = 0;
+    write.dstArrayElement = 0;
+    write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+    write.setImageInfo(imageInfo);
+    m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+
+    LOG_INFO("Fullscreen descriptor set created");
+}
+
+// ── Default scene spheres ─────────────────────────────────────────
+
+void Application::initSpheres() {
+    m_spheres.clear();
+
+    // Ground-like large sphere
+    m_spheres.push_back({
+        glm::vec3(0.0f, -100.5f, 0.0f),  // center
+        100.0f,                            // radius
+        glm::vec4(0.3f, 0.5f, 0.3f, 1.0f), // color (greenish)
+        0.0f, 0.0f, 1.0f, 0.0f           // refl, refr, ior, pad
+    });
+
+    // Center sphere
+    m_spheres.push_back({
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        1.0f,
+        glm::vec4(0.9f, 0.3f, 0.2f, 1.0f), // red
+        0.0f, 0.0f, 1.5f, 0.0f
+    });
+
+    // Left sphere
+    m_spheres.push_back({
+        glm::vec3(-2.5f, 0.0f, 0.5f),
+        1.0f,
+        glm::vec4(0.2f, 0.4f, 0.9f, 1.0f), // blue
+        0.0f, 0.0f, 1.5f, 0.0f
+    });
+
+    // Right sphere
+    m_spheres.push_back({
+        glm::vec3(2.5f, 0.0f, 0.5f),
+        1.0f,
+        glm::vec4(0.9f, 0.8f, 0.1f, 1.0f), // yellow
+        0.0f, 0.0f, 1.5f, 0.0f
+    });
+
+    // Small sphere on top
+    m_spheres.push_back({
+        glm::vec3(0.0f, 2.0f, 1.0f),
+        0.6f,
+        glm::vec4(0.8f, 0.2f, 0.7f, 1.0f), // pink
+        0.0f, 0.0f, 1.5f, 0.0f
+    });
+
+    m_spheresDirty = true;
+    LOG_INFO("Default scene initialized with " + std::to_string(m_spheres.size()) + " spheres");
+}
+
+void Application::cleanupRtSwapChainResources() {
+    m_fullscreenDescriptorSet = nullptr;
+    m_fullscreenDescriptorSetLayout = nullptr;
+    m_fullscreenPipelineLayout = nullptr;
+    m_fullscreenVertShader.reset();
+    m_fullscreenFragShader.reset();
+
+    m_rtDescriptorSet = nullptr;
+
+    m_rtOutputSampler = nullptr;
+    m_rtOutputImageView = nullptr;
+    m_rtOutputImage = nullptr;
+    m_rtOutputImageMemory = nullptr;
+}
+
 void Application::recreateSwapChain() {
     if (m_windowWidth == 0 || m_windowHeight == 0) {
         return;
@@ -698,6 +1110,7 @@ void Application::recreateSwapChain() {
     m_vulkanDevice->waitIdle();
 
     cleanupSwapChain();
+    cleanupRtSwapChainResources();
 
     m_swapChainManager->recreate(m_windowWidth, m_windowHeight);
     createRenderPass();
@@ -709,6 +1122,12 @@ void Application::recreateSwapChain() {
     createDescriptorPool();
     createDescriptorSets();
     createCommandBuffers();
+
+    // Recreate RT resources (size-dependent)
+    createRtStorageImage();
+    createRtDescriptorSets();
+    createFullscreenDescriptorSet();  // creates layout + set (must be before pipeline)
+    createFullscreenPipeline();
 
     m_camera.SetAspectRatio(static_cast<float>(m_windowWidth) / m_windowHeight);
 
@@ -800,6 +1219,27 @@ void Application::drawFrame() {
     ImGui::DragFloat("Diffuse Strength", &m_lights.diffuseStrength, 0.01f, 0.0f, 2.0f);
     ImGui::DragFloat("Specular Strength", &m_lights.specularStrength, 0.01f, 0.0f, 2.0f);
 
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("RT Spheres");
+    ImGui::Separator();
+
+    for (int i = 0; i < static_cast<int>(m_spheres.size()); i++) {
+        ImGui::PushID(i);
+        std::string header = "Sphere " + std::to_string(i);
+        if (ImGui::CollapsingHeader(header.c_str())) {
+            bool changed = false;
+            changed |= ImGui::DragFloat3("Center", glm::value_ptr(m_spheres[i].center), 0.05f);
+            changed |= ImGui::DragFloat("Radius", &m_spheres[i].radius, 0.05f, 0.01f, 100.0f);
+            changed |= ImGui::ColorEdit4("Color", glm::value_ptr(m_spheres[i].color));
+            changed |= ImGui::DragFloat("Reflectivity", &m_spheres[i].reflectivity, 0.01f, 0.0f, 1.0f);
+            changed |= ImGui::DragFloat("Refractivity", &m_spheres[i].refractivity, 0.01f, 0.0f, 1.0f);
+            changed |= ImGui::DragFloat("IOR", &m_spheres[i].indexOfRefraction, 0.01f, 0.1f, 5.0f);
+            if (changed) m_spheresDirty = true;
+        }
+        ImGui::PopID();
+    }
+
     ImGui::End();
 
     ImGui::Render();
@@ -830,12 +1270,50 @@ void Application::drawFrame() {
     }
     m_imagesInFlight[imageIndex] = *m_inFlightFences[m_currentFrame];
 
-    updateUniformBuffer(m_currentFrame);
+    updateSphereBuffer();
 
     m_commandBuffers[m_currentFrame].reset();
 
     vk::CommandBufferBeginInfo beginInfo;
     m_commandBuffers[m_currentFrame].begin(beginInfo);
+
+    // ── Compute dispatch ──────────────────────────────────────
+    m_commandBuffers[m_currentFrame].bindPipeline(vk::PipelineBindPoint::eCompute,
+        *m_pipelineManager->getPipeline("rt_main"));
+    m_commandBuffers[m_currentFrame].bindDescriptorSets(
+        vk::PipelineBindPoint::eCompute,
+        *m_rtPipelineLayout,
+        0,
+        *m_rtDescriptorSet,
+        nullptr);
+
+    uint32_t groupX = (m_windowWidth  + 7) / 8;
+    uint32_t groupY = (m_windowHeight + 7) / 8;
+    m_commandBuffers[m_currentFrame].dispatch(groupX, groupY, 1);
+
+    // Barrier: compute write → fragment read
+    {
+        vk::ImageMemoryBarrier barrier;
+        barrier.setOldLayout(vk::ImageLayout::eGeneral);
+        barrier.setNewLayout(vk::ImageLayout::eGeneral);
+        barrier.setImage(*m_rtOutputImage);
+        barrier.setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+        barrier.setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED);
+        barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.setSrcAccessMask(vk::AccessFlagBits::eShaderWrite);
+        barrier.setDstAccessMask(vk::AccessFlagBits::eShaderRead);
+
+        m_commandBuffers[m_currentFrame].pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eFragmentShader,
+            {}, nullptr, nullptr, barrier);
+    }
+
+    // ── Fullscreen display ────────────────────────────────────
 
     vk::Viewport viewport;
     viewport.setX(0.0f);
@@ -863,37 +1341,17 @@ void Application::drawFrame() {
 
     m_commandBuffers[m_currentFrame].beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
 
-    m_commandBuffers[m_currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *m_pipelineManager->getPipeline("main"));
+    m_commandBuffers[m_currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics,
+        *m_pipelineManager->getPipeline("fullscreen"));
+    m_commandBuffers[m_currentFrame].bindDescriptorSets(
+        vk::PipelineBindPoint::eGraphics,
+        *m_fullscreenPipelineLayout,
+        0,
+        *m_fullscreenDescriptorSet,
+        nullptr);
 
-    for (auto& instance : m_instances) {
-        instance.updateBuffer();
-
-        auto& model = *instance.model;
-
-        vk::Buffer vertexBuffers[] = {*model.getVertexBuffer()->get()};
-        vk::DeviceSize vertOffsets[] = {0};
-        m_commandBuffers[m_currentFrame].bindVertexBuffers(0, vertexBuffers, vertOffsets);
-
-        vk::Buffer instanceBuffers[] = {*instance.getBuffer()->get()};
-        vk::DeviceSize instOffsets[] = {0};
-        m_commandBuffers[m_currentFrame].bindVertexBuffers(1, instanceBuffers, instOffsets);
-
-        m_commandBuffers[m_currentFrame].bindIndexBuffer(*model.getIndexBuffer()->get(), 0, vk::IndexType::eUint32);
-
-        std::array<vk::DescriptorSet, 2> descriptorSetsToBind = {
-            *m_uboDescriptorSets[m_currentFrame],
-            *model.getTextureDescriptorSet()
-        };
-        m_commandBuffers[m_currentFrame].bindDescriptorSets(
-            vk::PipelineBindPoint::eGraphics,
-            *m_pipelineLayout,
-            0,
-            descriptorSetsToBind,
-            nullptr
-        );
-
-        m_commandBuffers[m_currentFrame].drawIndexed(static_cast<uint32_t>(model.indices.size()), 1, 0, 0, 0);
-    }
+    // Fullscreen triangle — 3 vertices, no vertex/index buffers
+    m_commandBuffers[m_currentFrame].draw(3, 1, 0, 0);
 
     ImGui_ImplVulkan_RenderDrawData(
         ImGui::GetDrawData(),

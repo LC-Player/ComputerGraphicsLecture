@@ -18,6 +18,7 @@ struct VSOutput
 
 struct CameraData {
     float4x4 viewProjection;
+    float4x4 invViewProjection;
     float4 cameraViewPos;
 }
 

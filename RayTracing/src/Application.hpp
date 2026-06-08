@@ -12,6 +12,7 @@
 #include "Model.h"
 #include "Instance.h"
 #include "Light.h"
+#include "Scene.h"
 
 namespace RYRayTracing {
     class WindowManager;
@@ -51,10 +52,35 @@ private:
     std::vector<Model> m_models;
     std::vector<Instance> m_instances;
 
-    std::vector<std::unique_ptr<Buffer>> m_cameraUniformBuffers;
-    std::vector<void*> m_mappedCameraUniformData;
-    std::vector<std::unique_ptr<Buffer>> m_lightUniformBuffers; //
-    std::vector<void*> m_mappedLightUniformData; //
+    std::vector<std::unique_ptr<Buffer>> m_lightUniformBuffers;
+    std::vector<void*> m_mappedLightUniformData;
+
+    // ── Ray tracing compute pipeline ────────────────────────
+    std::unique_ptr<ShaderModule> m_rtComputeShader;
+    vk::raii::DescriptorSetLayout m_rtDescriptorSetLayout = nullptr;
+    vk::raii::PipelineLayout m_rtPipelineLayout = nullptr;
+    vk::raii::DescriptorSet m_rtDescriptorSet = nullptr;
+    vk::raii::DescriptorPool m_rtDescriptorPool = nullptr;
+    std::vector<std::unique_ptr<Buffer>> m_rtCameraUniformBuffers;
+    std::vector<void*> m_mappedRtCameraUniformData;
+
+    // RT output storage image
+    vk::raii::Image m_rtOutputImage = nullptr;
+    vk::raii::DeviceMemory m_rtOutputImageMemory = nullptr;
+    vk::raii::ImageView m_rtOutputImageView = nullptr;
+    vk::raii::Sampler m_rtOutputSampler = nullptr;
+
+    // Fullscreen display pipeline
+    std::unique_ptr<ShaderModule> m_fullscreenVertShader;
+    std::unique_ptr<ShaderModule> m_fullscreenFragShader;
+    vk::raii::DescriptorSetLayout m_fullscreenDescriptorSetLayout = nullptr;
+    vk::raii::PipelineLayout m_fullscreenPipelineLayout = nullptr;
+    vk::raii::DescriptorSet m_fullscreenDescriptorSet = nullptr;
+
+    // Scene primitives for RT
+    std::unique_ptr<Buffer> m_sphereBuffer;
+    std::vector<SphereData> m_spheres;
+    bool m_spheresDirty = true;
 
     vk::raii::DescriptorSetLayout m_uboDescriptorSetLayout = nullptr;
     vk::raii::DescriptorSetLayout m_textureDescriptorSetLayout = nullptr;
@@ -91,6 +117,7 @@ private:
     uint32_t m_windowHeight;
 
     bool m_framebufferResized;
+    bool m_imguiInitialized = false;
 
     Transform m_cameraTransform;
     SceneCamera m_camera;
@@ -103,6 +130,8 @@ private:
 
     void initComponents();
 
+    void initSpheres();
+
     void cleanup();
 
     void recreateSwapChain();
@@ -110,6 +139,9 @@ private:
     void cleanupSwapChain();
 
     void cleanupSyncObjects();
+
+    void cleanupRtResources();
+    void cleanupRtSwapChainResources();
 
     void createInstance();
 
@@ -141,7 +173,19 @@ private:
 
     void createSyncObjects();
 
+    // RT methods
+    void createRtStorageImage();
+    void createRtDescriptorSetLayout();
+    void createRtDescriptorPool();
+    void createRtDescriptorSets();
+    void createRtComputePipeline();
+    void createRtCameraUniformBuffers();
+    void createSphereBuffer();
+    void createFullscreenPipeline();
+    void createFullscreenDescriptorSet();
+
     void updateUniformBuffer(size_t currentFrame);
+    void updateSphereBuffer();
 
     void drawFrame();
 
