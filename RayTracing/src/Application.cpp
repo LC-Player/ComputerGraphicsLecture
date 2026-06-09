@@ -256,7 +256,7 @@ void Application::initComponents() {
     m_materials.push_back(MaterialData{ glm::vec3(0.8f, 0.8f, 0.8f), 0.0f, glm::vec3(0.0f), 0.0f, 0.3f, 1.5f }); // 瓷砖地面
     m_materials.push_back(MaterialData{ glm::vec3(1.0f, 0.8f, 0.2f), 0.0f, glm::vec3(0.0f), 1.0f, 0.2f, 1.5f }); // 金球
     m_materials.push_back(MaterialData{ glm::vec3(0.8f, 0.1f, 0.1f), 0.0f, glm::vec3(0.0f), 0.0f, 0.4f, 1.5f }); // 塑料球
-    m_materials.push_back(MaterialData{ glm::vec3(1.0f, 1.0f, 1.0f), 0.95f, glm::vec3(0.0f), 0.0f, 0.1f, 1.52f }); // 玻璃球
+    m_materials.push_back(MaterialData{ glm::vec3(0, 0, 0), 0.95f, glm::vec3(0.0f), 0.0f, 0.1f, 1.52f }); // 玻璃球
     m_materials.push_back(MaterialData{ glm::vec3(0.6f, 0.3f, 0.1f), 0.0f, glm::vec3(0.0f), 0.0f, 0.7f, 1.5f }); // 木头
     setMaterialsDirty();
 }
@@ -1320,9 +1320,8 @@ void Application::drawFrame() {
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Text("Global Illumination");
+    ImGui::Text("Global");
     ImGui::Separator();
-    ImGui::DragFloat("Ambient Strength", &m_ambientStrength, 0.01f, 0.0f, 1.0f);
     ImGui::DragFloat("Diffuse Strength", &m_diffuseStrength, 0.01f, 0.0f, 1.0f);
     ImGui::DragFloat("Specular Strength", &m_specularStrength, 0.01f, 0.0f, 2.0f);
 
@@ -1384,7 +1383,6 @@ void Application::drawFrame() {
     rtPC.sphereCount = static_cast<uint32_t>(m_spheres.size());
     rtPC.lightCount = static_cast<uint32_t>(m_pointLights.size());
     rtPC.materialCount = static_cast<uint32_t>(m_materials.size());
-    rtPC.ambientStrength = m_ambientStrength;
     rtPC.diffuseStrength = m_diffuseStrength;
     rtPC.specularStrength = m_specularStrength;
     m_commandBuffers[m_currentFrame].pushConstants<RTGlobalConstants>(

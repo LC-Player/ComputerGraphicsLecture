@@ -34,7 +34,6 @@ struct RTGlobalConstants {
     uint32_t sphereCount;
     uint32_t lightCount;
     uint32_t materialCount;
-    float ambientStrength;
     float diffuseStrength;
     float specularStrength;
 };
@@ -130,7 +129,6 @@ private:
     bool isMaterialsDirty() { bool positive = m_materialsDirty > 0; m_materialsDirty -= positive; return positive; }
     void setMaterialsDirty() { m_materialsDirty = m_framesInFlight; }
 
-    float m_ambientStrength = 0.1f;
     float m_diffuseStrength = 0.5f;
     float m_specularStrength = 1.0f;
 
