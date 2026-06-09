@@ -8,15 +8,12 @@ namespace RYRayTracing {
 
 // GPU-compatible material (std430 layout in shader)
 struct MaterialData {
-    alignas(16) glm::vec4 diffuseColor;
-    float reflectivity;       // 0.0 = diffuse, 1.0 = perfect mirror
-    float indexOfRefraction;  // e.g. 1.5 for glass
-    float specularComponent;  // specular exponent (shininess)
-    float diffuseWeight;      // 漫反射分量权重
-    float specularWeight;     // 镜面反射分量权重
-    float reflectionWeight;   // 反射分量权重
-    float refractionWeight;   // 折射分量权重
-    float _pad;               // std430 alignment
+    alignas(16) glm::vec3 diffuseColor;
+    float transparency; // 1 for fully transparent, transparency ~ 1 - alpha
+    alignas(16) glm::vec3 emission;
+    float metallic; // 1 like metal
+    float roughness; // 0 = mirror, 1 = very rough
+    float ior; // index of refraction
 };
 
 // GPU-compatible sphere (std430 layout in shader)

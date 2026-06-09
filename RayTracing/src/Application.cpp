@@ -208,6 +208,8 @@ void Application::initImGui() {
 
     ImGui::CreateContext();
 
+    ImGui::GetIO().Fonts->AddFontFromFileTTF("assets/fonts/CascadiaMono.ttf", 18.0f);
+
     ImGui_ImplGlfw_InitForVulkan(m_windowManager->getHandle(), true);
 
     ImGui_ImplVulkan_InitInfo init_info{};
@@ -251,46 +253,11 @@ void Application::initComponents() {
     m_pointLights.push_back({{-4.0f, 4.0f, 4.0f}, 20.0f, {1.0f, 1.0f, 1.0f}, 30.0f});
     setLightsDirty();
 
-    m_materials.push_back({
-        glm::vec4(0.3f, 0.5f, 0.3f, 1.0f), // diffuseColor (greenish ground)
-        0.0f, 1.0f,                          // reflectivity, IOR
-        60.0f,                               // specularComponent
-        0.1f, 0.8f,                          // diffuseWeight, specularWeight
-        0.0f, 0.0f,                          // reflectionWeight, refractionWeight
-        0.0f                                 // _pad
-    });
-    m_materials.push_back({
-        glm::vec4(0.9f, 0.3f, 0.2f, 1.0f), // red
-        0.0f, 1.5f,
-        60.0f,
-        0.1f, 0.8f,
-        0.2f, 0.0f,
-        0.0f
-    });
-    m_materials.push_back({
-        glm::vec4(0.2f, 0.4f, 0.9f, 1.0f), // blue
-        0.0f, 1.5f,
-        60.0f,
-        0.1f, 0.8f,
-        0.2f, 0.0f,
-        0.0f
-    });
-    m_materials.push_back({
-        glm::vec4(0.9f, 0.8f, 0.1f, 1.0f), // yellow
-        0.0f, 1.5f,
-        60.0f,
-        0.1f, 0.8f,
-        0.2f, 0.0f,
-        0.0f
-    });
-    m_materials.push_back({
-        glm::vec4(0.8f, 0.2f, 0.7f, 1.0f), // pink
-        0.0f, 1.5f,
-        60.0f,
-        0.1f, 0.8f,
-        0.2f, 0.0f,
-        0.0f
-    });
+    m_materials.push_back(MaterialData{ glm::vec3(0.8f, 0.8f, 0.8f), 0.0f, glm::vec3(0.0f), 0.0f, 0.3f, 1.5f }); // 瓷砖地面
+    m_materials.push_back(MaterialData{ glm::vec3(1.0f, 0.8f, 0.2f), 0.0f, glm::vec3(0.0f), 1.0f, 0.2f, 1.5f }); // 金球
+    m_materials.push_back(MaterialData{ glm::vec3(0.8f, 0.1f, 0.1f), 0.0f, glm::vec3(0.0f), 0.0f, 0.4f, 1.5f }); // 塑料球
+    m_materials.push_back(MaterialData{ glm::vec3(1.0f, 1.0f, 1.0f), 0.95f, glm::vec3(0.0f), 0.0f, 0.1f, 1.52f }); // 玻璃球
+    m_materials.push_back(MaterialData{ glm::vec3(0.6f, 0.3f, 0.1f), 0.0f, glm::vec3(0.0f), 0.0f, 0.7f, 1.5f }); // 木头
     setMaterialsDirty();
 }
 
@@ -994,13 +961,12 @@ void Application::createRtComputePipeline() {
 
 void Application::createSphereBuffer() {
     if (m_spheres.empty()) {
-        m_spheres.push_back({}); // ensure at least one entry for buffer creation
+        m_spheres.push_back({});
     }
     for (size_t i = 0; i < m_framesInFlight; i++) {
-        // Host-visible for easy per-frame updates
         auto sphereBuffer = std::make_unique<Buffer>(
             Buffer::createBuffer(m_vulkanDevice.get(),
-                m_spheres.size() * sizeof(SphereData),
+                kMaxSpheres * sizeof(SphereData),
                 vk::BufferUsageFlagBits::eStorageBuffer,
                 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
         sphereBuffer->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
@@ -1019,7 +985,7 @@ void Application::createMaterialBuffer() {
     for (size_t i = 0; i < m_framesInFlight; i++) {
         auto buf = std::make_unique<Buffer>(
             Buffer::createBuffer(m_vulkanDevice.get(),
-                m_materials.size() * sizeof(MaterialData),
+                kMaxMaterials * sizeof(MaterialData),
                 vk::BufferUsageFlagBits::eStorageBuffer,
                 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
         buf->copyFrom(m_materials.data(), m_materials.size() * sizeof(MaterialData));
@@ -1249,19 +1215,19 @@ void Application::drawFrame() {
             if (changed) {
                 setLightsDirty();
             }
+            if (ImGui::Button("Remove Light")) {
+                m_pointLights.erase(m_pointLights.begin() + i);
+                setLightsDirty();
+                ImGui::PopID();
+                i--;
+                continue;
+            }
         }
         ImGui::PopID();
     }
     if (ImGui::Button("Add Light")) {
         m_pointLights.push_back({{0.0f, 3.0f, 0.0f}, 10.0f, {1.0f, 1.0f, 1.0f}, 20.0f});
         setLightsDirty();
-    }
-    if (m_pointLights.size() > 1) {
-        ImGui::SameLine();
-        if (ImGui::Button("Remove Light")) {
-            m_pointLights.pop_back();
-            setLightsDirty();
-        }
     }
 
     ImGui::Spacing();
@@ -1276,16 +1242,37 @@ void Application::drawFrame() {
             bool changed = false;
             changed |= ImGui::DragFloat3("Center", glm::value_ptr(m_spheres[i].center), 0.05f);
             changed |= ImGui::DragFloat("Radius", &m_spheres[i].radius, 0.05f, 0.01f, 100.0f);
+
+            std::vector<std::string> matNameStorage;
+            std::vector<const char*> matNames;
+            for (size_t m = 0; m < m_materials.size(); m++) {
+                matNameStorage.push_back("Material " + std::to_string(m));
+                matNames.push_back(matNameStorage.back().c_str());
+            }
             int matIdx = static_cast<int>(m_spheres[i].materialIndex);
-            if (ImGui::DragInt("Material Index", &matIdx, 1, 0, static_cast<int>(m_materials.size()) - 1)) {
+            if (ImGui::Combo("Material", &matIdx, matNames.data(), static_cast<int>(matNames.size()))) {
                 m_spheres[i].materialIndex = static_cast<uint32_t>(matIdx);
                 changed = true;
             }
+
             if (changed) {
                 setSpheresDirty();
             }
+            if (ImGui::Button("Remove Sphere")) {
+                m_spheres.erase(m_spheres.begin() + i);
+                setSpheresDirty();
+                ImGui::PopID();
+                i--;
+                continue;
+            }
         }
         ImGui::PopID();
+    }
+    if (m_spheres.size() < kMaxSpheres) {
+        if (ImGui::Button("Add Sphere")) {
+            m_spheres.push_back({glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0, {0.0f, 0.0f, 0.0f}});
+            setSpheresDirty();
+        }
     }
 
     ImGui::Spacing();
@@ -1298,20 +1285,46 @@ void Application::drawFrame() {
         std::string header = "Material " + std::to_string(i);
         if (ImGui::CollapsingHeader(header.c_str())) {
             bool changed = false;
-            changed |= ImGui::ColorEdit4("Diffuse Color", glm::value_ptr(m_materials[i].diffuseColor));
-            changed |= ImGui::DragFloat("Reflectivity", &m_materials[i].reflectivity, 0.01f, 0.0f, 1.0f);
-            changed |= ImGui::DragFloat("IOR", &m_materials[i].indexOfRefraction, 0.01f, 0.1f, 5.0f);
-            changed |= ImGui::DragFloat("Specular Exp.", &m_materials[i].specularComponent, 0.5f, 1.0f, 500.0f);
-            changed |= ImGui::DragFloat("Diffuse Weight", &m_materials[i].diffuseWeight, 0.01f, 0.0f, 1.0f);
-            changed |= ImGui::DragFloat("Specular Weight", &m_materials[i].specularWeight, 0.01f, 0.0f, 1.0f);
-            changed |= ImGui::DragFloat("Reflection Weight", &m_materials[i].reflectionWeight, 0.01f, 0.0f, 1.0f);
-            changed |= ImGui::DragFloat("Refraction Weight", &m_materials[i].refractionWeight, 0.01f, 0.0f, 1.0f);
+            changed |= ImGui::ColorEdit3("Diffuse Color", glm::value_ptr(m_materials[i].diffuseColor));
+            changed |= ImGui::DragFloat("Transparency", &m_materials[i].transparency, 0.01f, 0.0f, 1.0f, "%.3f");
+            changed |= ImGui::ColorEdit3("Emission", glm::value_ptr(m_materials[i].emission));
+            changed |= ImGui::DragFloat("Metallic", &m_materials[i].metallic, 0.01f, 0.0f, 1.0f, "%.3f");
+            changed |= ImGui::DragFloat("Roughness", &m_materials[i].roughness, 0.01f, 0.0f, 1.0f, "%.3f");
+            changed |= ImGui::DragFloat("IOR", &m_materials[i].ior, 0.01f, 1.0f, 3.0f, "%.3f");
             if (changed) {
                 setMaterialsDirty();
+            }
+            if (ImGui::Button("Remove Material")) {
+                m_materials.erase(m_materials.begin() + i);
+                setMaterialsDirty();
+                ImGui::PopID();
+                i--;
+                continue;
             }
         }
         ImGui::PopID();
     }
+    if (m_materials.size() < kMaxMaterials) {
+        if (ImGui::Button("Add Material")) {
+            m_materials.push_back({
+                    glm::vec3(0.5f, 0.5f, 0.5f), // diffuseColor
+                    0.0f,                       // transparency (0 = opaque)
+                    glm::vec3(0.0f, 0.0f, 0.0f),// emission
+                    0.0f,                       // metallic
+                    0.5f,                       // roughness
+                    1.5f                        // ior
+                });
+            setMaterialsDirty();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Text("Global Illumination");
+    ImGui::Separator();
+    ImGui::DragFloat("Ambient Strength", &m_ambientStrength, 0.01f, 0.0f, 1.0f);
+    ImGui::DragFloat("Diffuse Strength", &m_diffuseStrength, 0.01f, 0.0f, 1.0f);
+    ImGui::DragFloat("Specular Strength", &m_specularStrength, 0.01f, 0.0f, 2.0f);
 
     ImGui::End();
 
@@ -1371,9 +1384,9 @@ void Application::drawFrame() {
     rtPC.sphereCount = static_cast<uint32_t>(m_spheres.size());
     rtPC.lightCount = static_cast<uint32_t>(m_pointLights.size());
     rtPC.materialCount = static_cast<uint32_t>(m_materials.size());
-    rtPC.ambientStrength = 0.1f;
-    rtPC.diffuseStrength = 0.5f;
-    rtPC.specularStrength = 1.0f;
+    rtPC.ambientStrength = m_ambientStrength;
+    rtPC.diffuseStrength = m_diffuseStrength;
+    rtPC.specularStrength = m_specularStrength;
     m_commandBuffers[m_currentFrame].pushConstants<RTGlobalConstants>(
         *m_rtPipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, rtPC);
 

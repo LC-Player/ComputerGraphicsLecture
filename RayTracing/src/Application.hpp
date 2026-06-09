@@ -120,6 +120,8 @@ private:
     vk::raii::Sampler m_rtOutputSampler = nullptr;
 
     // ── Scene primitives for RT ──────────────────────────────────
+    static constexpr size_t kMaxSpheres = 32;
+    static constexpr size_t kMaxMaterials = 32;
     std::vector<std::unique_ptr<Buffer>> m_sphereBuffers;
     std::vector<SphereData> m_spheres;
     std::vector<std::unique_ptr<Buffer>> m_materialBuffers;
@@ -127,6 +129,10 @@ private:
     int m_materialsDirty = m_framesInFlight;
     bool isMaterialsDirty() { bool positive = m_materialsDirty > 0; m_materialsDirty -= positive; return positive; }
     void setMaterialsDirty() { m_materialsDirty = m_framesInFlight; }
+
+    float m_ambientStrength = 0.1f;
+    float m_diffuseStrength = 0.5f;
+    float m_specularStrength = 1.0f;
 
     // ── Framebuffers & depth ──────────────────────────────────
     std::vector<vk::raii::Framebuffer> m_swapChainFramebuffers;
