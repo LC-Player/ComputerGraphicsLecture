@@ -45,7 +45,7 @@
         <Args filename="bunny-mesh.obj" display="1" normalinterpolation="0" rendermethod="1"/>
         <Scale x="0.3" y="0.3" z="0.3"/>
         <Rotation x="0.0" y="0.0" z="0.0"/>
-        <Translation x="0.9" y="-1.0" z="-1.5"/>
+        <Translation x="0.9" y="-1.0" z="-3.0"/>
         <RefractiveIndex x="1.0"/>
         <Albedo x="0.9" y="0.1" z="0.0" w="0.0"/>
         <Diffuse r="0.0522876" g="0.156863" b="0.117647"/>

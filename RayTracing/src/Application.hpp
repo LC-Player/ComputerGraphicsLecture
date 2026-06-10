@@ -11,7 +11,9 @@
 #include "Transform.h"
 #include "Light.h"
 #include "Scene.h"
+#include "BVH.h"
 #include "vulkan/Texture.hpp"
+#include "EditorUI.h"
 
 namespace RYRayTracing {
     class WindowManager;
@@ -34,8 +36,6 @@ struct RTGlobalConstants {
     uint32_t materialCount;
     uint32_t modelRefCount;
     float ambientStrength;
-    float diffuseStrength;
-    float specularStrength;
 };
 
 class Application {
@@ -59,7 +59,7 @@ private:
     std::unique_ptr<CommandManager> m_commandManager;
 
     // ── Descriptor set layouts(organized by logical data group) ──
-    /// Set 0 for "main" (Blinn-Phong) and "rt_main" (compute) pipelines.
+    /// Set 0 for "main" (PBR) and "rt_main" (compute) pipelines.
     /// b0: CameraData UBO, b1: point lights SSBO
     vk::raii::DescriptorSetLayout m_perFrameSetLayout = nullptr;
 
@@ -151,10 +151,20 @@ private:
     int addModelSource(const std::string& objPath, const std::string& texturePath = "");
     void createDummyTexture();
 
-    float m_ambientStrength = 0.1f;
-    float m_diffuseStrength = 0.5f;
-    float m_specularStrength = 1.0f;
+    // BVH
+    static constexpr size_t kMaxBVHNodes = 500'000;
+    std::vector<ModelSourceBVH> m_modelBVHs;
+    std::vector<BVHNode> m_flatBVHNodes;
+    std::vector<std::unique_ptr<Buffer>> m_bvhBuffers;
+    std::vector<std::unique_ptr<Buffer>> m_bvhTriRemapBuffers;
+    int m_bvhDirty = m_framesInFlight;
+    bool isBVHDirty() { bool v = m_bvhDirty > 0; m_bvhDirty -= v; return v; }
+    void setBVHDirty() { m_bvhDirty = m_framesInFlight; }
 
+    // Editor UI
+    std::unique_ptr<EditorUI> m_editorUI;
+
+    float m_ambientStrength = 0.1f;
     // ── Framebuffers & depth ──────────────────────────────────
     std::vector<vk::raii::Framebuffer> m_swapChainFramebuffers;
     vk::raii::Image m_depthImage = nullptr;

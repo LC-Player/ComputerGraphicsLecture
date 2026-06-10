@@ -50,7 +50,8 @@ struct ModelRef {
     alignas(16) glm::vec3 boundingSphereCenter; // object space
     float boundingSphereRadius;
     int32_t textureIndex;              // -1 = use diffuse color, >=0 = texture array index
-    float _pad[3];
+    int32_t bvhRoot;                   // index into bvhNodes SSBO; -1 = no BVH
+    float _pad[2];
 };
 static_assert(sizeof(ModelRef) == 128, "ModelRef must be 128 bytes (std430)");
 
@@ -65,6 +66,7 @@ struct ModelSource {
     uint32_t vertexOffset = 0;   // set once after merge
     uint32_t firstIndex  = 0;   // set once after merge
     uint32_t indexCount  = 0;
+    int32_t  bvhRoot      = -1; // set once after merge
     std::string name;
     std::string texturePath;
 };

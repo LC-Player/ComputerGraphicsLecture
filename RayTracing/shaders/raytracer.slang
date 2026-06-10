@@ -73,9 +73,18 @@ struct ModelRef {
     float3   boundingSphereCenter;
     float    boundingSphereRadius;
     int      textureIndex;
+    int      bvhRoot;
     float    _pad0;
     float    _pad1;
-    float    _pad2;
+};
+
+// std430; 48 bytes per node
+struct BVHNode {
+    float3 bboxMin;
+    float3 bboxMax;
+    int    leftOrFirst;   // internal: left child idx; leaf: first global index
+    int    rightOrCount;  // internal: right child idx; leaf: triangle count
+    int    splitAxis;     // -1=leaf, 0/1/2=internal split axis
 };
 
 struct RTGlobalConstants {
@@ -84,8 +93,6 @@ struct RTGlobalConstants {
     uint materialCount;
     uint modelRefCount;
     float ambientStrength;
-    float diffuseStrength;
-    float specularStrength;
 };
 
 // ── Bindings ──────────────────────────────────────────────────────
@@ -104,6 +111,8 @@ struct RTGlobalConstants {
 [[vk::binding(5, 1)]] StructuredBuffer<ModelRef>   modelRefs;
 [[vk::binding(6, 1)]] Sampler2D modelTextures[8];
 [[vk::binding(7, 1)]] Sampler2D envmap;
+[[vk::binding(8, 1)]] StructuredBuffer<BVHNode> bvhNodes;
+[[vk::binding(9, 1)]] StructuredBuffer<uint> bvhTriRemap;
 
 // ── Ray-sphere intersection ───────────────────────────────────────
 
@@ -146,6 +155,21 @@ bool intersectTriangle(Ray ray, float3 v0, float3 v1, float3 v2, out float t, ou
     if (t < 0.001) return false;
     uv = float2(u, v);
     return true;
+}
+
+// ── Ray-AABB intersection ──────────────────────────────────────────
+
+bool intersectAABB(Ray ray, float3 bboxMin, float3 bboxMax,
+                   out float tNear, out float tFar)
+{
+    float3 invD = 1.0 / ray.direction;
+    float3 t0 = (bboxMin - ray.origin) * invD;
+    float3 t1 = (bboxMax - ray.origin) * invD;
+    float3 ts = min(t0, t1);
+    float3 tl = max(t0, t1);
+    tNear = max(ts.x, max(ts.y, ts.z));
+    tFar  = min(tl.x, min(tl.y, tl.z));
+    return tFar >= max(0.001, tNear);
 }
 
 // ── Ray generation ────────────────────────────────────────────────
@@ -216,35 +240,61 @@ HitResult traceScene(Ray ray)
         float bsNear = (-b - sqrtD) / (2.0 * a);
         float bsFar  = (-b + sqrtD) / (2.0 * a);
         if (bsFar < 0.001 || bsNear >= result.t) continue;
+        if (ref.bvhRoot < 0) continue;
 
-        for (uint tri = 0; tri < ref.indexCount; tri += 3) {
-            uint i0 = indices[ref.firstIndex + tri + 0];
-            uint i1 = indices[ref.firstIndex + tri + 1];
-            uint i2 = indices[ref.firstIndex + tri + 2];
+        // BVH stack traversal
+        int stack[64];
+        int stackPtr = 1;
+        stack[0] = ref.bvhRoot;
 
-            GPUVertex v0 = vertices[ref.vertexOffset + i0];
-            GPUVertex v1 = vertices[ref.vertexOffset + i1];
-            GPUVertex v2 = vertices[ref.vertexOffset + i2];
+        while (stackPtr > 0) {
+            stackPtr--;
+            int nodeIdx = stack[stackPtr];
+            BVHNode node = bvhNodes[nodeIdx];
 
-            float tHit;
-            float2 uv;
-            if (!intersectTriangle(objRay, v0.position, v1.position, v2.position, tHit, uv)) continue;
-            if (tHit <= 0.001 || tHit >= result.t) continue;
+            float tMinAABB, tMaxAABB;
+            if (!intersectAABB(objRay, node.bboxMin, node.bboxMax, tMinAABB, tMaxAABB))
+                continue;
+            if (tMinAABB >= result.t) continue;
 
-            // Interpolate normal
-            float w = 1.0 - uv.x - uv.y;
-            float3 objNormal = normalize(v0.normal * w + v1.normal * uv.x + v2.normal * uv.y);
+            if (node.splitAxis == -1) {
+                // Leaf: leftOrFirst is position in bvhTriRemap
+                int triCount = node.rightOrCount;
+                int remapBase = node.leftOrFirst;
+                for (int t = 0; t < triCount; t++) {
+                    int globalIdx = int(bvhTriRemap[remapBase + t]);
+                    uint i0 = indices[globalIdx + 0];
+                    uint i1 = indices[globalIdx + 1];
+                    uint i2 = indices[globalIdx + 2];
 
-            // Transform normal to world space
-            float3 worldNormal = normalize(mul(objNormal, (float3x3)ref.invTransform));
+                    GPUVertex v0 = vertices[ref.vertexOffset + i0];
+                    GPUVertex v1 = vertices[ref.vertexOffset + i1];
+                    GPUVertex v2 = vertices[ref.vertexOffset + i2];
 
-            result.hit = 1;
-            result.t = tHit;
-            result.point = ray.origin + tHit * ray.direction;
-            result.normal = worldNormal;
-            result.materialIndex = ref.materialId;
-            result.textureIndex = ref.textureIndex;
-            result.texCoord = v0.texCoord * (1.0 - uv.x - uv.y) + v1.texCoord * uv.x + v2.texCoord * uv.y;
+                    float tHit;
+                    float2 uv;
+                    if (!intersectTriangle(objRay, v0.position, v1.position, v2.position, tHit, uv)) continue;
+                    if (tHit <= 0.001 || tHit >= result.t) continue;
+
+                    float w = 1.0 - uv.x - uv.y;
+                    float3 objNormal = normalize(v0.normal * w + v1.normal * uv.x + v2.normal * uv.y);
+                    float3 worldNormal = normalize(mul(objNormal, (float3x3)ref.invTransform));
+
+                    result.hit = 1;
+                    result.t = tHit;
+                    result.point = ray.origin + tHit * ray.direction;
+                    result.normal = worldNormal;
+                    result.materialIndex = ref.materialId;
+                    result.textureIndex = ref.textureIndex;
+                    result.texCoord = v0.texCoord * (1.0 - uv.x - uv.y) + v1.texCoord * uv.x + v2.texCoord * uv.y;
+                }
+            } else {
+                // Internal: push right first (LIFO → left processed first)
+                int left  = node.leftOrFirst;
+                int right = node.rightOrCount;
+                if (stackPtr < 63) stack[stackPtr++] = right;
+                if (stackPtr < 63) stack[stackPtr++] = left;
+            }
         }
     }
 #if CHECKERBOARD_FLOOR
@@ -313,7 +363,7 @@ float3 computeDirectBRDF(HitResult hit, Ray ray, inout Material mat) {
         mat.metallic = 0.0;
         mat.transparency = 0.0;
         mat.ior = 1.0;
-        bool white = (int(0.5 * hit.point.x + 1000.0) + int(0.5 * hit.point.z)) & 1;
+        bool white = ((int(0.5 * hit.point.x + 1000.0) + int(0.5 * hit.point.z)) & 1) != 0;
         mat.diffuseColor = white ? float3(0.8, 0.8, 0.8) : float3(0.3, 0.2, 0.1);
     }
 #endif

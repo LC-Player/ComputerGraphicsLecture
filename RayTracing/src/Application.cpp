@@ -21,8 +21,6 @@
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/type_ptr.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/constants.hpp>
 #include <vector>
 #include <array>
 #include <unordered_map>
@@ -41,12 +39,12 @@ Application::Application()
     : m_depthFormat(vk::Format::eUndefined)
       , m_currentFrame(0)
       , m_framesInFlight(0)
-      , m_windowWidth(1080)
-      , m_windowHeight(720)
+      , m_windowWidth(1920)
+      , m_windowHeight(1080)
       , m_framebufferResized(false)
       , m_fpsLastTime(std::chrono::steady_clock::now()) {
     Logger::init("raytracing.log");
-    LOG_INFO("=== Vulkan Quad Rendering Application ===");
+    LOG_INFO("=== GPU RT Renderer ===");
 }
 
 Application::~Application() {
@@ -60,7 +58,7 @@ Application::~Application() {
 
 void Application::run() {
     try {
-        LOG_INFO("Starting Vulkan quad application");
+        LOG_INFO("Starting GPU RT Renderer");
 
         initComponents();
         initVulkan();
@@ -84,7 +82,7 @@ void Application::initVulkan() {
     WindowConfig windowConfig;
     windowConfig.width = m_windowWidth;
     windowConfig.height = m_windowHeight;
-    windowConfig.title = "Lab 3 Blinn-Phong Rendering";
+    windowConfig.title = "GPU RT Renderer";
     windowConfig.resizable = true;
 
     m_windowManager = std::make_unique<WindowManager>(windowConfig);
@@ -187,8 +185,6 @@ void Application::initComponents() {
     // ── Load scene from XML ──
     SceneConfig cfg = loadSceneConfig("assets/SceneConfig.xml");
     m_ambientStrength = cfg.ambientStrength;
-    m_diffuseStrength = cfg.diffuseStrength;
-    m_specularStrength = cfg.specularStrength;
 
     // ── Lights ──
     for (const auto& pl : cfg.lights) {
@@ -244,6 +240,28 @@ void Application::initComponents() {
     }
     setMaterialsDirty();
     setModelRefsDirty();
+
+    // ── Editor UI ──────────────────────────────────────────────
+    EditorUIContext uiCtx;
+    uiCtx.cameraTransform = &m_cameraTransform;
+    uiCtx.camera = &m_camera;
+    uiCtx.modelRefs = &m_modelRefs;
+    uiCtx.modelRefSourceIdx = &m_modelRefSourceIdx;
+    uiCtx.modelRefTransforms = &m_modelRefTransforms;
+    uiCtx.modelSources = &m_modelSources;
+    uiCtx.materials = &m_materials;
+    uiCtx.maxModelRefs = kMaxModelRefs;
+    uiCtx.lights = &m_lights;
+    uiCtx.spheres = &m_spheres;
+    uiCtx.maxSpheres = kMaxSpheres;
+    uiCtx.maxMaterials = kMaxMaterials;
+    uiCtx.ambientStrength = &m_ambientStrength;
+    uiCtx.currentFps = &m_currentFps;
+    uiCtx.setLightsDirty = [this]() { setLightsDirty(); };
+    uiCtx.setSpheresDirty = [this]() { setSpheresDirty(); };
+    uiCtx.setMaterialsDirty = [this]() { setMaterialsDirty(); };
+    uiCtx.setModelRefsDirty = [this]() { setModelRefsDirty(); };
+    m_editorUI = std::make_unique<EditorUI>(uiCtx);
 }
 
 void Application::cleanup() {
@@ -293,9 +311,9 @@ void Application::createInstance() {
     LOG_INFO("Creating Vulkan instance...");
 
     InstanceConfig config;
-    config.applicationName = "Lab 3 Blinn-Phong Rendering";
+    config.applicationName = "GPU RT Renderer";
     config.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    config.engineName = "No Engine";
+    config.engineName = "GPU RT Renderer";
     config.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     config.apiVersion = VK_API_VERSION_1_3;
     config.enableValidation = Validation::shouldEnableValidation();
@@ -375,9 +393,9 @@ void Application::createDescriptorSetLayouts() {
         m_samplerSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
     }
 
-    // RT resource: b0-b6 = spheres, output, materials, vertices, indices, modelRefs, textures, envmap
+    // RT resource: b0-b9 = spheres, output, materials, vertices, indices, modelRefs, textures, envmap, bvh, bvhTriRemap
     {
-        std::array<vk::DescriptorSetLayoutBinding, 8> bindings;
+        std::array<vk::DescriptorSetLayoutBinding, 10> bindings;
         bindings[0].binding = 0;
         bindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         bindings[0].descriptorCount = 1;
@@ -417,6 +435,16 @@ void Application::createDescriptorSetLayouts() {
         bindings[7].descriptorType = vk::DescriptorType::eCombinedImageSampler;
         bindings[7].descriptorCount = 1;
         bindings[7].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        bindings[8].binding = 8;
+        bindings[8].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[8].descriptorCount = 1;
+        bindings[8].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        bindings[9].binding = 9;
+        bindings[9].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[9].descriptorCount = 1;
+        bindings[9].stageFlags = vk::ShaderStageFlagBits::eCompute;
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo;
         layoutInfo.setBindings(bindings);
@@ -572,13 +600,13 @@ void Application::createDescriptorPool() {
 
     std::array<vk::DescriptorPoolSize, 4> poolSizes;
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = fif;
+    poolSizes[0].descriptorCount = fif; // camera UBO
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = fif + fif * (kMaxTextures + 1); // +1 for envmap
+    poolSizes[1].descriptorCount = fif * (kMaxTextures + 2); // frames in flight * (kMaxTexture, 1 env map, 1 full screen),
     poolSizes[2].type = vk::DescriptorType::eStorageBuffer;
-    poolSizes[2].descriptorCount = fif * 10;
+    poolSizes[2].descriptorCount = fif * 8; // lights, sphere, materials, vertices, indices, modelRefs, BVH nodes, BVH triRemap
     poolSizes[3].type = vk::DescriptorType::eStorageImage;
-    poolSizes[3].descriptorCount = fif * 2;
+    poolSizes[3].descriptorCount = fif; // RT output
 
     vk::DescriptorPoolCreateInfo poolInfo;
     poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -716,6 +744,8 @@ void Application::cleanupRtResources() {
     m_vertexBuffers.clear();
     m_indexBuffers.clear();
     m_modelRefBuffers.clear();
+    m_bvhBuffers.clear();
+    m_bvhTriRemapBuffers.clear();
     m_textures.clear();
     m_envmapTexture.reset();
     m_dummyTextureView = nullptr;
@@ -743,9 +773,9 @@ int Application::addModelSource(const std::string& objPath, const std::string& t
 
     for (const auto& shape : shapes) {
         for (const auto& idx : shape.mesh.indices) {
-            uint64_t key = (uint64_t)idx.vertex_index << 32
-                         | (uint64_t)(uint16_t)idx.texcoord_index << 16
-                         | (uint64_t)(uint16_t)idx.normal_index;
+            uint64_t key = static_cast<uint64_t>(idx.vertex_index) << 32
+                         | static_cast<uint64_t>(static_cast<uint16_t>(idx.texcoord_index)) << 16
+                         | static_cast<uint64_t>(static_cast<uint16_t>(idx.normal_index));
 
             if (!uniqueMap.contains(key)) {
                 uniqueMap[key] = static_cast<uint32_t>(src.positions.size());
@@ -757,22 +787,22 @@ int Application::addModelSource(const std::string& objPath, const std::string& t
                 src.positions.push_back(pos);
 
                 if (idx.normal_index >= 0) {
-                    src.normals.push_back({
+                    src.normals.emplace_back(
                         attrib.normals[3 * idx.normal_index + 0],
                         attrib.normals[3 * idx.normal_index + 1],
                         attrib.normals[3 * idx.normal_index + 2]
-                    });
+                    );
                 } else {
-                    src.normals.push_back({0.0f, 0.0f, 0.0f});
+                    src.normals.emplace_back(0.0f, 0.0f, 0.0f);
                 }
 
                 if (idx.texcoord_index >= 0) {
-                    src.texCoords.push_back({
+                    src.texCoords.emplace_back(
                         attrib.texcoords[2 * idx.texcoord_index + 0],
                         1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]
-                    });
+                    );
                 } else {
-                    src.texCoords.push_back({0.0f, 0.0f});
+                    src.texCoords.emplace_back(0.0f, 0.0f);
                 }
             }
             src.indices.push_back(uniqueMap[key]);
@@ -782,7 +812,10 @@ int Application::addModelSource(const std::string& objPath, const std::string& t
     // Compute smooth vertex normals if the OBJ has none
     bool hasNormals = false;
     for (const auto& n : src.normals) {
-        if (glm::dot(n, n) > 0.0f) { hasNormals = true; break; }
+        if (glm::dot(n, n) > 0.0f) {
+            hasNormals = true;
+            break;
+        }
     }
     if (!hasNormals && src.indices.size() >= 3) {
         std::vector<glm::vec3> accum(src.positions.size(), glm::vec3(0.0f));
@@ -808,6 +841,11 @@ int Application::addModelSource(const std::string& objPath, const std::string& t
     src.boundingSphereCenter = ws.center;
     src.boundingSphereRadius = ws.radius;
     src.texturePath = texturePath;
+
+    // Build object-space BVH
+    ModelSourceBVH bvh;
+    buildSAHBVH(src, bvh);
+    m_modelBVHs.push_back(std::move(bvh));
 
     int idx = static_cast<int>(m_modelSources.size());
     m_modelSources.push_back(std::move(src));
@@ -968,7 +1006,41 @@ void Application::createGeometryBuffers() {
         m_modelRefs[i].boundingSphereCenter = src.boundingSphereCenter;
         m_modelRefs[i].boundingSphereRadius = src.boundingSphereRadius;
         m_modelRefs[i].invTransform = glm::inverse(m_modelRefTransforms[i].transform());
-        m_modelRefs[i].textureIndex = static_cast<int32_t>(m_modelRefSourceIdx[i]);
+        m_modelRefs[i].textureIndex = m_modelRefSourceIdx[i];
+    }
+
+    // Post-process BVH trees
+    m_flatBVHNodes.clear();
+    std::vector<uint32_t> mergedTriRemap;
+    int32_t globalNodeOffset = 0;
+    for (size_t s = 0; s < m_modelSources.size(); ++s) {
+        if (s >= m_modelBVHs.size()) break;
+        const auto& bvhSrc = m_modelBVHs[s];
+
+        // Convert triRemap: local triangle index → global index buffer offset
+        uint32_t remapBase = static_cast<uint32_t>(mergedTriRemap.size());
+        for (uint32_t localTri : bvhSrc.triRemap) {
+            mergedTriRemap.push_back(
+                m_modelSources[s].firstIndex + localTri * 3);
+        }
+
+        // Offset nodes
+        for (BVHNode node : bvhSrc.nodes) {
+            if (node.splitAxis >= 0) {
+                node.leftOrFirst += globalNodeOffset;
+                node.rightOrCount += globalNodeOffset;
+            } else {
+                // leftOrFirst is position in triRemap → offset into merged array
+                node.leftOrFirst += static_cast<int32_t>(remapBase);
+            }
+            m_flatBVHNodes.push_back(node);
+        }
+        for (size_t r = 0; r < m_modelRefs.size(); ++r) {
+            if (m_modelRefSourceIdx[r] == static_cast<int>(s))
+                m_modelRefs[r].bvhRoot = globalNodeOffset + bvhSrc.rootIndex;
+        }
+        m_modelSources[s].bvhRoot = globalNodeOffset + bvhSrc.rootIndex;
+        globalNodeOffset += static_cast<int32_t>(bvhSrc.nodes.size());
     }
 
     for (size_t i = 0; i < m_framesInFlight; i++) {
@@ -992,6 +1064,34 @@ void Application::createGeometryBuffers() {
                 vk::BufferUsageFlagBits::eStorageBuffer,
                 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
         m_modelRefBuffers.back()->copyFrom(m_modelRefs.data(), m_modelRefs.size() * sizeof(ModelRef));
+    }
+
+    // BVH SSBO
+    m_bvhBuffers.clear();
+    for (size_t i = 0; i < m_framesInFlight; i++) {
+        m_bvhBuffers.push_back(std::make_unique<Buffer>(
+            Buffer::createBuffer(m_vulkanDevice.get(),
+                kMaxBVHNodes * sizeof(BVHNode),
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
+        if (!m_flatBVHNodes.empty())
+            m_bvhBuffers.back()->copyFrom(m_flatBVHNodes.data(),
+                m_flatBVHNodes.size() * sizeof(BVHNode));
+    }
+    setBVHDirty();
+
+    // BVH tri-remap SSBO (maps BVH leaf positions → global index buffer offsets)
+    static constexpr size_t kMaxTriRemap = 1'000'000;
+    m_bvhTriRemapBuffers.clear();
+    for (size_t i = 0; i < m_framesInFlight; i++) {
+        m_bvhTriRemapBuffers.push_back(std::make_unique<Buffer>(
+            Buffer::createBuffer(m_vulkanDevice.get(),
+                kMaxTriRemap * sizeof(uint32_t),
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
+        if (!mergedTriRemap.empty())
+            m_bvhTriRemapBuffers.back()->copyFrom(mergedTriRemap.data(),
+                mergedTriRemap.size() * sizeof(uint32_t));
     }
 
     setModelRefsDirty();
@@ -1221,6 +1321,40 @@ void Application::createRtResourceDescriptorSet() {
             write.setImageInfo(writeInfos);
             m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
         }
+
+        // b8: BVH nodes SSBO
+        if (!m_bvhBuffers.empty()) {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.buffer = *m_bvhBuffers[i]->get();
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
+
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 8;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eStorageBuffer;
+            std::array writeInfos = { bufferInfo };
+            write.setBufferInfo(writeInfos);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
+
+        // b9: BVH tri-remap SSBO
+        if (!m_bvhTriRemapBuffers.empty()) {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.buffer = *m_bvhTriRemapBuffers[i]->get();
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
+
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 9;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eStorageBuffer;
+            std::array writeInfos = { bufferInfo };
+            write.setBufferInfo(writeInfos);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
     }
 
     LOG_INFO("RT resource descriptor set created");
@@ -1437,259 +1571,7 @@ void Application::drawFrame() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    ImGui::Begin("Transform");
-
-    ImGui::SetWindowFontScale(1.4f);
-
-    ImGui::Text("FPS: %.1f", m_currentFps);
-    ImGui::Spacing();
-
-    ImGui::Text("Camera");
-    ImGui::Separator();
-    ImGui::DragFloat3("Translation", glm::value_ptr(m_cameraTransform.translation), 0.01f);
-    ImGui::DragFloat3("Rotation", glm::value_ptr(m_cameraTransform.rotation), 0.01f);
-    float fov = glm::degrees(m_camera.GetPerspectiveVerticalFOV());
-    if (ImGui::DragFloat("FOV", &fov, 0.01f)) {
-        m_camera.SetPerspectiveVerticalFOV(glm::radians(fov));
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text("Model Refs");
-    ImGui::Separator();
-    for (int i = 0; i < static_cast<int>(m_modelRefs.size()); i++) {
-        ImGui::PushID(i);
-        auto& src = m_modelSources[m_modelRefSourceIdx[i]];
-        std::string header = src.name + " [" + std::to_string(i) + "]";
-        if (ImGui::CollapsingHeader(header.c_str())) {
-            bool changed = false;
-            auto& t = m_modelRefTransforms[i];
-            changed |= ImGui::DragFloat3("Translation", glm::value_ptr(t.translation), 0.05f);
-            changed |= ImGui::DragFloat3("Rotation", glm::value_ptr(t.rotation), 0.01f);
-            float sx = t.scale.x;
-            if (ImGui::DragFloat("Scale", &sx, 0.01f)) { t.scale = glm::vec3(sx); changed = true; }
-            changed |= ImGui::ColorEdit4("Color", glm::value_ptr(m_modelRefs[i].color));
-
-            std::vector<std::string> matNameStorage;
-            for (size_t m = 0; m < m_materials.size(); m++) {
-                matNameStorage.push_back("Material " + std::to_string(m));
-            }
-            std::vector<const char*> matNames;
-            for (auto& s : matNameStorage) {
-                matNames.push_back(s.c_str());
-            }
-            int matIdx = static_cast<int>(m_modelRefs[i].materialId);
-            if (ImGui::Combo("Material", &matIdx, matNames.data(), static_cast<int>(matNames.size()))) {
-                m_modelRefs[i].materialId = static_cast<uint32_t>(matIdx);
-                changed = true;
-            }
-
-            if (changed) {
-                m_modelRefs[i].invTransform = glm::inverse(t.transform());
-                setModelRefsDirty();
-            }
-            if (ImGui::Button("Remove")) {
-                m_modelRefs.erase(m_modelRefs.begin() + i);
-                m_modelRefSourceIdx.erase(m_modelRefSourceIdx.begin() + i);
-                m_modelRefTransforms.erase(m_modelRefTransforms.begin() + i);
-                setModelRefsDirty();
-                ImGui::PopID();
-                i--;
-                continue;
-            }
-        }
-        ImGui::PopID();
-    }
-    if (m_modelRefs.size() < kMaxModelRefs && !m_modelSources.empty()) {
-        static int selectedSource = 0;
-        if (selectedSource >= static_cast<int>(m_modelSources.size()))
-            selectedSource = 0;
-        std::vector<std::string> srcNames;
-        std::vector<const char*> srcItems;
-        for (size_t s = 0; s < m_modelSources.size(); s++) {
-            srcNames.push_back(m_modelSources[s].name);
-            srcItems.push_back(srcNames.back().c_str());
-        }
-        ImGui::SetNextItemWidth(200);
-        ImGui::Combo("##srcCombo", &selectedSource, srcItems.data(), static_cast<int>(srcItems.size()));
-        ImGui::SameLine();
-        if (ImGui::Button("Add ModelRef")) {
-            const auto& src = m_modelSources[selectedSource];
-            ModelRef ref{};
-            ref.vertexOffset = src.vertexOffset;
-            ref.firstIndex  = src.firstIndex;
-            ref.indexCount  = src.indexCount;
-            ref.boundingSphereCenter = src.boundingSphereCenter;
-            ref.boundingSphereRadius = src.boundingSphereRadius;
-            ref.textureIndex = selectedSource;
-            m_modelRefs.push_back(ref);
-            m_modelRefSourceIdx.push_back(selectedSource);
-            m_modelRefTransforms.push_back(Transform{});
-            setModelRefsDirty();
-        }
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text("Lights");
-    ImGui::Separator();
-
-    for (int i = 0; i < static_cast<int>(m_lights.size()); i++) {
-        ImGui::PushID(i);
-        const char* typeNames[] = {"Point", "Spot", "Directional"};
-        std::string header = "Light " + std::to_string(i) + " (" + typeNames[m_lights[i].type] + ")";
-        if (ImGui::CollapsingHeader(header.c_str())) {
-            bool changed = false;
-            int type = m_lights[i].type;
-            if (ImGui::Combo("Type", &type, typeNames, 3)) {
-                m_lights[i].type = type;
-                changed = true;
-            }
-            changed |= ImGui::ColorEdit3("Color", glm::value_ptr(m_lights[i].color));
-            changed |= ImGui::DragFloat("Intensity", &m_lights[i].intensity, 0.1f, 0.0f, 100.0f);
-            if (m_lights[i].type != 2) { // not directional
-                changed |= ImGui::DragFloat3("Position", glm::value_ptr(m_lights[i].position), 0.1f);
-                changed |= ImGui::DragFloat("Max Distance", &m_lights[i].maxDistance, 0.1f, 0.0f, 200.0f);
-            }
-            if (m_lights[i].type >= 1) { // spot or directional
-                changed |= ImGui::DragFloat3("Direction", glm::value_ptr(m_lights[i].direction), 0.1f);
-            }
-            if (m_lights[i].type == 1) { // spot
-                float innerDeg = glm::degrees(std::acos(m_lights[i].innerCos));
-                float outerDeg = glm::degrees(std::acos(m_lights[i].outerCos));
-                if (ImGui::DragFloat("Inner Angle", &innerDeg, 0.5f, 0.0f, 90.0f)) {
-                    m_lights[i].innerCos = std::cos(glm::radians(innerDeg));
-                    changed = true;
-                }
-                if (ImGui::DragFloat("Outer Angle", &outerDeg, 0.5f, 0.0f, 90.0f)) {
-                    m_lights[i].outerCos = std::cos(glm::radians(outerDeg));
-                    changed = true;
-                }
-            }
-            if (changed) setLightsDirty();
-            if (ImGui::Button("Remove Light")) {
-                m_lights.erase(m_lights.begin() + i);
-                setLightsDirty();
-                ImGui::PopID();
-                i--;
-                continue;
-            }
-        }
-        ImGui::PopID();
-    }
-    if (ImGui::Button("Add Light")) {
-        LightData l{};
-        l.type = 0;
-        l.position = {0.0f, 3.0f, 0.0f};
-        l.color = {1.0f, 1.0f, 1.0f};
-        l.intensity = 10.0f;
-        l.maxDistance = 20.0f;
-        l.direction = {0.0f, -1.0f, 0.0f};
-        l.innerCos = std::cos(glm::radians(15.0f));
-        l.outerCos = std::cos(glm::radians(30.0f));
-        m_lights.push_back(l);
-        setLightsDirty();
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text("RT Spheres");
-    ImGui::Separator();
-
-    for (int i = 0; i < static_cast<int>(m_spheres.size()); i++) {
-        ImGui::PushID(i);
-        std::string header = "Sphere " + std::to_string(i);
-        if (ImGui::CollapsingHeader(header.c_str())) {
-            bool changed = false;
-            changed |= ImGui::DragFloat3("Center", glm::value_ptr(m_spheres[i].center), 0.05f);
-            changed |= ImGui::DragFloat("Radius", &m_spheres[i].radius, 0.05f, 0.01f, 100.0f);
-
-            std::vector<std::string> matNameStorage;
-            for (size_t m = 0; m < m_materials.size(); m++) {
-                matNameStorage.push_back("Material " + std::to_string(m));
-            }
-            std::vector<const char*> matNames;
-            for (auto& s : matNameStorage) {
-                matNames.push_back(s.c_str());
-            }
-            int matIdx = static_cast<int>(m_spheres[i].materialIndex);
-            if (ImGui::Combo("Material", &matIdx, matNames.data(), static_cast<int>(matNames.size()))) {
-                m_spheres[i].materialIndex = static_cast<uint32_t>(matIdx);
-                changed = true;
-            }
-
-            if (changed) {
-                setSpheresDirty();
-            }
-            if (ImGui::Button("Remove Sphere")) {
-                m_spheres.erase(m_spheres.begin() + i);
-                setSpheresDirty();
-                ImGui::PopID();
-                i--;
-                continue;
-            }
-        }
-        ImGui::PopID();
-    }
-    if (m_spheres.size() < kMaxSpheres) {
-        if (ImGui::Button("Add Sphere")) {
-            m_spheres.push_back({glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0, {0.0f, 0.0f, 0.0f}});
-            setSpheresDirty();
-        }
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text("Materials");
-    ImGui::Separator();
-
-    for (int i = 0; i < static_cast<int>(m_materials.size()); i++) {
-        ImGui::PushID(i);
-        std::string header = "Material " + std::to_string(i);
-        if (ImGui::CollapsingHeader(header.c_str())) {
-            bool changed = false;
-            changed |= ImGui::ColorEdit3("Diffuse Color", glm::value_ptr(m_materials[i].diffuseColor));
-            changed |= ImGui::DragFloat("Transparency", &m_materials[i].transparency, 0.01f, 0.0f, 1.0f, "%.3f");
-            changed |= ImGui::ColorEdit3("Emission", glm::value_ptr(m_materials[i].emission));
-            changed |= ImGui::DragFloat("Metallic", &m_materials[i].metallic, 0.01f, 0.0f, 1.0f, "%.3f");
-            changed |= ImGui::DragFloat("Roughness", &m_materials[i].roughness, 0.01f, 0.0f, 1.0f, "%.3f");
-            changed |= ImGui::DragFloat("IOR", &m_materials[i].ior, 0.01f, 1.0f, 3.0f, "%.3f");
-            if (changed) {
-                setMaterialsDirty();
-            }
-            if (ImGui::Button("Remove Material")) {
-                m_materials.erase(m_materials.begin() + i);
-                setMaterialsDirty();
-                ImGui::PopID();
-                i--;
-                continue;
-            }
-        }
-        ImGui::PopID();
-    }
-    if (m_materials.size() < kMaxMaterials) {
-        if (ImGui::Button("Add Material")) {
-            m_materials.push_back({
-                    glm::vec3(0.5f, 0.5f, 0.5f), // diffuseColor
-                    0.0f,                       // transparency (0 = opaque)
-                    glm::vec3(0.0f, 0.0f, 0.0f),// emission
-                    0.0f,                       // metallic
-                    0.5f,                       // roughness
-                    1.5f                        // ior
-                });
-            setMaterialsDirty();
-        }
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Text("Global Illumination");
-    ImGui::Separator();
-    ImGui::DragFloat("Ambient Strength", &m_ambientStrength, 0.01f, 0.0f, 1.0f);
-    ImGui::DragFloat("Diffuse Strength", &m_diffuseStrength, 0.01f, 0.0f, 1.0f);
-    ImGui::DragFloat("Specular Strength", &m_specularStrength, 0.01f, 0.0f, 2.0f);
-
-    ImGui::End();
+    m_editorUI->draw();
 
     ImGui::Render();
 
@@ -1724,7 +1606,10 @@ void Application::drawFrame() {
     updateSphereBuffer(m_currentFrame);
     updateMaterialBuffer(m_currentFrame);
     updateModelRefBuffer(m_currentFrame);
-
+    if (isBVHDirty() && !m_bvhBuffers.empty()) {
+        m_bvhBuffers[m_currentFrame]->copyFrom(m_flatBVHNodes.data(),
+            m_flatBVHNodes.size() * sizeof(BVHNode));
+    }
 
     m_commandBuffers[m_currentFrame].reset();
 
@@ -1751,8 +1636,6 @@ void Application::drawFrame() {
     rtPC.materialCount = static_cast<uint32_t>(m_materials.size());
     rtPC.modelRefCount = static_cast<uint32_t>(m_modelRefs.size());
     rtPC.ambientStrength = m_ambientStrength;
-    rtPC.diffuseStrength = m_diffuseStrength;
-    rtPC.specularStrength = m_specularStrength;
     m_commandBuffers[m_currentFrame].pushConstants<RTGlobalConstants>(
         *m_rtPipelineLayout, vk::ShaderStageFlagBits::eCompute, 0, rtPC);
 

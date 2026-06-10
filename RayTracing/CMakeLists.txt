@@ -44,6 +44,8 @@ target_sources(RayTracing PRIVATE
         src/tiny_obj_loader_impl.cpp
         src/tinyxml2.cpp
         src/SceneConfig.cpp
+        src/BVH.cpp
+        src/EditorUI.cpp
 )
 
 find_package(Vulkan REQUIRED)
