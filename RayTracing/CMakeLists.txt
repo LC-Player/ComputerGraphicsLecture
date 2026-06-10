@@ -36,14 +36,14 @@ target_sources(RayTracing PRIVATE
 target_sources(RayTracing PRIVATE
         src/main.cpp
         src/Application.cpp
-        src/Model.cpp
-        src/Instance.cpp
         src/Camera.cpp
         src/imgui_impl_glfw.cpp
         src/imgui_impl_vulkan.cpp
         src/imgui_impl_glfw.h
         src/imgui_impl_vulkan.h
         src/tiny_obj_loader_impl.cpp
+        src/tinyxml2.cpp
+        src/SceneConfig.cpp
 )
 
 find_package(Vulkan REQUIRED)
@@ -51,7 +51,6 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
 find_package(Stb REQUIRED)
-
 # Set include directories (include all module directories)
 target_include_directories(RayTracing PRIVATE
         ${CMAKE_SOURCE_DIR}

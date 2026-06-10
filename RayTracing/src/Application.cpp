@@ -16,14 +16,20 @@
 #include "imgui_impl_glfw.h"
 #include "imgui.h"
 #include "tiny_obj_loader.h"
+#include "Welzl.h"
+#include "SceneConfig.h"
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/constants.hpp>
 #include <vector>
 #include <array>
+#include <unordered_map>
 #include <thread>
 #include <chrono>
 #include <cstring>
+#include <cstdint>
 
 #include "imgui_internal.h"
 #include "Light.h"
@@ -35,8 +41,8 @@ Application::Application()
     : m_depthFormat(vk::Format::eUndefined)
       , m_currentFrame(0)
       , m_framesInFlight(0)
-      , m_windowWidth(1920)
-      , m_windowHeight(1080)
+      , m_windowWidth(1080)
+      , m_windowHeight(720)
       , m_framebufferResized(false)
       , m_fpsLastTime(std::chrono::steady_clock::now()) {
     Logger::init("raytracing.log");
@@ -72,76 +78,6 @@ void Application::run() {
     }
 }
 
-void Application::createModels() {
-    m_models.reserve(3);
-    m_instances.reserve(3);
-
-    // Viking room
-    {
-        Model model;
-        model.name = "Viking Room";
-        model.loadFromObj("assets/models/viking_room.obj");
-        model.createBuffers(m_vulkanDevice.get());
-        model.createTexture(m_vulkanDevice.get(), "assets/textures/viking_room.png");
-        m_models.push_back(std::move(model));
-    }
-
-    // Bunny
-    {
-        Model model;
-        model.name = "Bunny";
-        model.loadFromObj("assets/models/bunny.obj");
-        model.createBuffers(m_vulkanDevice.get());
-        model.createTexture(m_vulkanDevice.get(), "assets/textures/bunny.png");
-        m_models.push_back(std::move(model));
-    }
-
-    // Basketball
-    {
-        Model model;
-        model.name = "Basketball";
-        model.loadFromObj("assets/models/sphere.obj");
-        model.createBuffers(m_vulkanDevice.get());
-        model.createTexture(m_vulkanDevice.get(), "assets/textures/basketball.png");
-        m_models.push_back(std::move(model));
-    }
-
-    // Create instances referencing the models
-    {
-        Instance instance;
-        instance.name = "Viking Room";
-        instance.model = &m_models[0];
-        instance.transform = Transform{};
-        instance.transform.rotation = glm::vec3(0.38, -0.65, -2.18);
-        instance.transform.translation = { 0, 0, 0 };
-        instance.transform.scale = glm::vec3(1.0f);
-        instance.createBuffer(m_vulkanDevice.get());
-        m_instances.push_back(std::move(instance));
-    }
-    {
-        Instance instance;
-        instance.name = "Bunny";
-        instance.model = &m_models[1];
-        instance.transform = Transform{};
-        instance.transform.rotation = { 0.0, 0.77, 0.0 };
-        instance.transform.translation = { -2, -0.8, 0.00 };
-        instance.transform.scale = glm::vec3(1.0f);
-        instance.createBuffer(m_vulkanDevice.get());
-        m_instances.push_back(std::move(instance));
-    }
-    {
-        Instance instance;
-        instance.name = "Basketball";
-        instance.model = &m_models[2];
-        instance.transform = Transform{};
-        instance.transform.rotation = glm::vec3(0.0f);
-        instance.transform.translation = { 2, 0, 0};
-        instance.transform.scale = glm::vec3(0.85f);
-        instance.createBuffer(m_vulkanDevice.get());
-        m_instances.push_back(std::move(instance));
-    }
-}
-
 void Application::initVulkan() {
     LOG_INFO("Initializing Vulkan...");
 
@@ -167,13 +103,9 @@ void Application::initVulkan() {
     createSwapChain();
     createRenderPass();
     createDescriptorSetLayouts();
-    createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
     createCommandPool();
-#if 0
-    createModels();
-#endif
     createUniformBuffers();
     createLightBuffer();
     createDescriptorPool();
@@ -183,9 +115,12 @@ void Application::initVulkan() {
 
     createRtStorageImage();
     createRtComputePipeline();
-    initSpheres();
     createSphereBuffer();
     createMaterialBuffer();
+    createModelDataBuffers();
+    createTextures();
+    createDummyTexture();
+    createEnvmap();
     createRtResourceDescriptorSet();
     createFullscreenDescriptorSet();
     createFullscreenPipeline();
@@ -208,7 +143,7 @@ void Application::initImGui() {
 
     ImGui::CreateContext();
 
-    ImGui::GetIO().Fonts->AddFontFromFileTTF("assets/fonts/CascadiaMono.ttf", 18.0f);
+    ImGui::GetIO().Fonts->AddFontFromFileTTF("assets/fonts/CascadiaMono.ttf", 12.0f);
 
     ImGui_ImplGlfw_InitForVulkan(m_windowManager->getHandle(), true);
 
@@ -245,20 +180,70 @@ void Application::initImGui() {
 
 void Application::initComponents() {
     m_camera.SetAspectRatio(static_cast<float>(m_windowWidth) / m_windowHeight);
-    m_camera.SetPerspective(glm::radians(45.0f), 1, 100);
-    m_cameraTransform.translation = { 0, 0, 6 };
+    m_camera.SetPerspective(glm::radians(60.0f), 0.1f, 200.0f);
+    m_cameraTransform.translation = { 0.0f, 0.0f, 0.0f };
     m_cameraTransform.rotation = { 0, 0, 0 };
 
-    m_pointLights.push_back({{4.0f, 4.0f, 4.0f}, 20.0f, {1.0f, 1.0f, 1.0f}, 30.0f});
-    m_pointLights.push_back({{-4.0f, 4.0f, 4.0f}, 20.0f, {1.0f, 1.0f, 1.0f}, 30.0f});
+    // ── Load scene from XML ──
+    SceneConfig cfg = loadSceneConfig("assets/SceneConfig.xml");
+    m_ambientStrength = cfg.ambientStrength;
+    m_diffuseStrength = cfg.diffuseStrength;
+    m_specularStrength = cfg.specularStrength;
+
+    // ── Lights ──
+    for (const auto& pl : cfg.lights) {
+        LightData l{};
+        l.color = pl.color;
+        l.intensity = pl.intensity;
+        if (pl.type == LightType::Directional) {
+            l.type = 2;
+            l.direction = pl.direction;
+        } else if (pl.type == LightType::Spot) {
+            l.type = 1;
+            l.position = pl.position;
+            l.direction = pl.direction;
+            l.maxDistance = pl.maxDistance;
+            l.innerCos = std::cos(glm::radians(pl.innerAngle));
+            l.outerCos = std::cos(glm::radians(pl.outerAngle));
+        } else {
+            l.type = 0;
+            l.position = pl.position;
+            l.maxDistance = pl.maxDistance;
+        }
+        m_lights.push_back(l);
+    }
     setLightsDirty();
 
-    m_materials.push_back(MaterialData{ glm::vec3(0.8f, 0.8f, 0.8f), 0.0f, glm::vec3(0.0f), 0.0f, 0.3f, 1.5f }); // 瓷砖地面
-    m_materials.push_back(MaterialData{ glm::vec3(1.0f, 0.8f, 0.2f), 0.0f, glm::vec3(0.0f), 1.0f, 0.2f, 1.5f }); // 金球
-    m_materials.push_back(MaterialData{ glm::vec3(0.8f, 0.1f, 0.1f), 0.0f, glm::vec3(0.0f), 0.0f, 0.4f, 1.5f }); // 塑料球
-    m_materials.push_back(MaterialData{ glm::vec3(0, 0, 0), 0.95f, glm::vec3(0.0f), 0.0f, 0.1f, 1.52f }); // 玻璃球
-    m_materials.push_back(MaterialData{ glm::vec3(0.6f, 0.3f, 0.1f), 0.0f, glm::vec3(0.0f), 0.0f, 0.7f, 1.5f }); // 木头
+    // ── Models & Materials ──
+    for (const auto& pm : cfg.models) {
+        if (!pm.display) continue;
+
+        int srcIdx = addModelSource(pm.filename);
+        if (srcIdx < 0) continue;
+
+        MaterialData mat{};
+        mat.diffuseColor = pm.diffuseColor;
+        mat.metallic = pm.metallic;
+        mat.roughness = pm.roughness;
+        mat.transparency = pm.transparency;
+        mat.ior = pm.ior;
+        int matIdx = static_cast<int>(m_materials.size());
+        m_materials.push_back(mat);
+
+        ModelRef ref{};
+        ref.materialId = static_cast<uint32_t>(matIdx);
+        ref.color = glm::vec4(pm.diffuseColor, 1.0f);
+        m_modelRefs.push_back(ref);
+        m_modelRefSourceIdx.push_back(srcIdx);
+
+        Transform t;
+        t.scale = pm.scale;
+        t.rotation = glm::radians(pm.rotation);
+        t.translation = pm.translation;
+        m_modelRefTransforms.push_back(t);
+    }
     setMaterialsDirty();
+    setModelRefsDirty();
 }
 
 void Application::cleanup() {
@@ -284,11 +269,8 @@ void Application::cleanup() {
     m_samplerSetLayout = nullptr;
     m_rtResourceSetLayout = nullptr;
     m_imguiPool = nullptr;
-    m_blinnPhongPipelineLayout = nullptr;
     m_rtPipelineLayout = nullptr;
     m_fullscreenPipelineLayout = nullptr;
-    m_fragmentShader.reset();
-    m_vertexShader.reset();
     m_rtComputeShader.reset();
     m_fullscreenVertShader.reset();
     m_fullscreenFragShader.reset();
@@ -296,8 +278,6 @@ void Application::cleanup() {
     m_mappedCameraUniformData.clear();
     m_lightBuffers.clear();
     m_commandBuffers.clear();
-    m_instances.clear();
-    m_models.clear();
     m_commandManager.reset();
     m_pipelineManager.reset();
     m_renderPassManager.reset();
@@ -395,9 +375,9 @@ void Application::createDescriptorSetLayouts() {
         m_samplerSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
     }
 
-    // RT resource: b0 = spheres SSBO, b1 = output storage image, b2 = material SSBO
+    // RT resource: b0-b6 = spheres, output, materials, vertices, indices, modelRefs, textures, envmap
     {
-        std::array<vk::DescriptorSetLayoutBinding, 3> bindings;
+        std::array<vk::DescriptorSetLayoutBinding, 8> bindings;
         bindings[0].binding = 0;
         bindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
         bindings[0].descriptorCount = 1;
@@ -413,74 +393,37 @@ void Application::createDescriptorSetLayouts() {
         bindings[2].descriptorCount = 1;
         bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
 
+        bindings[3].binding = 3;
+        bindings[3].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[3].descriptorCount = 1;
+        bindings[3].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        bindings[4].binding = 4;
+        bindings[4].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[4].descriptorCount = 1;
+        bindings[4].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        bindings[5].binding = 5;
+        bindings[5].descriptorType = vk::DescriptorType::eStorageBuffer;
+        bindings[5].descriptorCount = 1;
+        bindings[5].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        bindings[6].binding = 6;
+        bindings[6].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        bindings[6].descriptorCount = kMaxTextures;
+        bindings[6].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+        bindings[7].binding = 7;
+        bindings[7].descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        bindings[7].descriptorCount = 1;
+        bindings[7].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
         vk::DescriptorSetLayoutCreateInfo layoutInfo;
         layoutInfo.setBindings(bindings);
         m_rtResourceSetLayout = m_vulkanDevice->get().createDescriptorSetLayout(layoutInfo);
     }
 
     LOG_INFO("Descriptor set layouts created");
-}
-
-void Application::createGraphicsPipeline() {
-    LOG_INFO("Creating graphics pipeline...");
-
-    try {
-        std::string shaderPath = "shaders/shader.spv";
-
-        LOG_INFO("Loading shader: " + shaderPath);
-        m_vertexShader = std::make_unique<ShaderModule>(
-            ShaderModule::createVertexShader(m_vulkanDevice.get(), shaderPath));
-
-        m_fragmentShader = std::make_unique<ShaderModule>(
-            ShaderModule::createFragmentShader(m_vulkanDevice.get(), shaderPath));
-
-        LOG_INFO("Shaders loaded successfully");
-
-        vk::PushConstantRange pcRange;
-        pcRange.stageFlags = vk::ShaderStageFlagBits::eFragment;
-        pcRange.size = sizeof(RTGlobalConstants);
-
-        std::array<vk::DescriptorSetLayout, 2> setLayouts = {*m_perFrameSetLayout, *m_samplerSetLayout};
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{};
-        pipelineLayoutInfo.setSetLayouts(setLayouts);
-        pipelineLayoutInfo.setPushConstantRanges(pcRange);
-
-        m_blinnPhongPipelineLayout = m_vulkanDevice->get().createPipelineLayout(pipelineLayoutInfo);
-        LOG_INFO("Pipeline layout created");
-
-        if (!m_pipelineManager) {
-            m_pipelineManager = std::make_unique<PipelineManager>(m_vulkanDevice->get());
-        }
-
-        PipelineConfig pipelineConfig;
-        pipelineConfig.vertexShader = *m_vertexShader->get();
-        pipelineConfig.fragmentShader = *m_fragmentShader->get();
-        pipelineConfig.pipelineLayout = *m_blinnPhongPipelineLayout;
-        pipelineConfig.renderPass = *m_renderPassManager->get();
-        pipelineConfig.vertexEntryPoint = "vertMain";
-        pipelineConfig.fragmentEntryPoint = "fragMain";
-        pipelineConfig.blendEnable = true;
-        pipelineConfig.depthTestEnable = true;
-
-        pipelineConfig.vertexBindingDescriptions = {getVertexBindingDescription(), getInstanceBindingDescription()};
-
-        auto vertAttribs = getVertexAttributeDescriptions();
-        auto instAttribs = getInstanceAttributeDescriptions();
-        pipelineConfig.vertexAttributeDescriptions.reserve(vertAttribs.size() + instAttribs.size());
-        pipelineConfig.vertexAttributeDescriptions.assign(
-            vertAttribs.begin(), vertAttribs.end());
-        pipelineConfig.vertexAttributeDescriptions.insert(
-            pipelineConfig.vertexAttributeDescriptions.end(),
-            instAttribs.begin(), instAttribs.end());
-
-        m_pipelineManager->createPipeline("main", pipelineConfig);
-
-        LOG_INFO("Graphics pipeline created successfully");
-
-    } catch (const std::exception& e) {
-        LOG_ERROR("Failed to create graphics pipeline: " + std::string(e.what()));
-        throw;
-    }
 }
 
 void Application::createFramebuffers() {
@@ -546,16 +489,16 @@ void Application::createUniformBuffersImpl(vk::DeviceSize bufferSize, std::vecto
 
 void Application::createLightBuffer() {
     constexpr size_t kMaxLights = 16;
-    if (m_pointLights.empty()) {
-        m_pointLights.push_back({});
+    if (m_lights.empty()) {
+        m_lights.push_back({});
     }
     for (size_t i = 0; i < m_framesInFlight; i++) {
         auto buf = std::make_unique<Buffer>(
             Buffer::createBuffer(m_vulkanDevice.get(),
-                kMaxLights * sizeof(PointLightData),
+                kMaxLights * sizeof(LightData),
                 vk::BufferUsageFlagBits::eStorageBuffer,
                 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
-        buf->copyFrom(m_pointLights.data(), m_pointLights.size() * sizeof(PointLightData));
+        buf->copyFrom(m_lights.data(), m_lights.size() * sizeof(LightData));
         m_lightBuffers.emplace_back(std::move(buf));
     }
     m_lightsDirty = 0;
@@ -625,23 +568,21 @@ void Application::createDepthResources() {
 void Application::createDescriptorPool() {
     LOG_INFO("Creating descriptor pool...");
 
-    uint32_t modelCount = static_cast<uint32_t>(m_models.size());
-
     uint32_t fif = static_cast<uint32_t>(m_framesInFlight);
 
     std::array<vk::DescriptorPoolSize, 4> poolSizes;
     poolSizes[0].type = vk::DescriptorType::eUniformBuffer;
-    poolSizes[0].descriptorCount = fif; // camera UBO per frame
+    poolSizes[0].descriptorCount = fif;
     poolSizes[1].type = vk::DescriptorType::eCombinedImageSampler;
-    poolSizes[1].descriptorCount = modelCount + fif; // material textures + fullscreen per frame
+    poolSizes[1].descriptorCount = fif + fif * (kMaxTextures + 1); // +1 for envmap
     poolSizes[2].type = vk::DescriptorType::eStorageBuffer;
-    poolSizes[2].descriptorCount = fif * 3; // spheres + lights + materials SSBO per frame
+    poolSizes[2].descriptorCount = fif * 10;
     poolSizes[3].type = vk::DescriptorType::eStorageImage;
-    poolSizes[3].descriptorCount = fif; // RT output per frame
+    poolSizes[3].descriptorCount = fif * 2;
 
     vk::DescriptorPoolCreateInfo poolInfo;
     poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    poolInfo.maxSets = fif * 3 + modelCount; // per-frame + RT resource + fullscreen + materials
+    poolInfo.maxSets = fif * 4;
     poolInfo.setPoolSizes(poolSizes);
     m_descriptorPool = m_vulkanDevice->get().createDescriptorPool(poolInfo);
 
@@ -683,10 +624,6 @@ void Application::createDescriptorSets() {
         writes[1].setBufferInfo(lightBufferInfo);
 
         m_vulkanDevice->get().updateDescriptorSets(writes, nullptr);
-    }
-
-    for (auto& model : m_models) {
-        model.createTextureDescriptorSet(m_vulkanDevice->get(), m_descriptorPool, m_samplerSetLayout);
     }
 
     LOG_INFO("Descriptor sets created");
@@ -731,9 +668,9 @@ void Application::updateUniformBuffer(size_t currentFrame) {
 }
 
 void Application::updateLightBuffer(size_t currentFrame) {
-    if (!isLightsDirty() || m_pointLights.empty()) return;
-    m_lightBuffers[currentFrame]->copyFrom(m_pointLights.data(),
-        m_pointLights.size() * sizeof(PointLightData));
+    if (!isLightsDirty() || m_lights.empty()) return;
+    m_lightBuffers[currentFrame]->copyFrom(m_lights.data(),
+        m_lights.size() * sizeof(LightData));
 }
 
 void Application::updateSphereBuffer(size_t currentFrame) {
@@ -746,19 +683,19 @@ void Application::updateMaterialBuffer(size_t currentFrame) {
     m_materialBuffers[currentFrame]->copyFrom(m_materials.data(), m_materials.size() * sizeof(MaterialData));
 }
 
+void Application::updateModelRefBuffer(size_t currentFrame) {
+    if (!isModelRefsDirty() || m_modelRefs.empty()) return;
+    m_modelRefBuffers[currentFrame]->copyFrom(m_modelRefs.data(), m_modelRefs.size() * sizeof(ModelRef));
+}
+
 
 void Application::cleanupSwapChain() {
-    m_perFrameDescriptorSets.clear();
-    for (auto& model : m_models) {
-        model.resetTextureDescriptorSet();
-    }
     m_swapChainFramebuffers.clear();
     m_depthImageView = nullptr;
     m_depthImage = nullptr;
     m_depthImageMemory = nullptr;
-    m_blinnPhongPipelineLayout = nullptr;
-    m_pipelineManager.reset();
     m_renderPassManager.reset();
+    m_fullscreenPipelineLayout = nullptr;
 }
 
 void Application::cleanupSyncObjects() {
@@ -772,11 +709,296 @@ void Application::cleanupSyncObjects() {
 
 void Application::cleanupRtResources() {
     cleanupRtSwapChainResources();
+    m_rtDescriptorSets.clear();
+    m_fullscreenDescriptorSets.clear();
     m_sphereBuffers.clear();
     m_materialBuffers.clear();
+    m_vertexBuffers.clear();
+    m_indexBuffers.clear();
+    m_modelRefBuffers.clear();
+    m_textures.clear();
+    m_envmapTexture.reset();
+    m_dummyTextureView = nullptr;
+    m_dummyTextureImage = nullptr;
+    m_dummyTextureMemory = nullptr;
+    m_textureSampler = nullptr;
 }
 
-// ── RT storage image ──────────────────────────────────────────────
+// ── Model data (merged buffers) ─────────────────────────────────────
+
+int Application::addModelSource(const std::string& objPath, const std::string& texturePath) {
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, objPath.c_str())) {
+        LOG_ERROR("Failed to load model: " + warn + err);
+        return -1;
+    }
+
+    ModelSource src;
+    src.name = objPath;
+    std::unordered_map<uint64_t, uint32_t> uniqueMap;
+
+    for (const auto& shape : shapes) {
+        for (const auto& idx : shape.mesh.indices) {
+            uint64_t key = (uint64_t)idx.vertex_index << 32
+                         | (uint64_t)(uint16_t)idx.texcoord_index << 16
+                         | (uint64_t)(uint16_t)idx.normal_index;
+
+            if (!uniqueMap.contains(key)) {
+                uniqueMap[key] = static_cast<uint32_t>(src.positions.size());
+                glm::vec3 pos = {
+                    attrib.vertices[3 * idx.vertex_index + 0],
+                    attrib.vertices[3 * idx.vertex_index + 1],
+                    attrib.vertices[3 * idx.vertex_index + 2]
+                };
+                src.positions.push_back(pos);
+
+                if (idx.normal_index >= 0) {
+                    src.normals.push_back({
+                        attrib.normals[3 * idx.normal_index + 0],
+                        attrib.normals[3 * idx.normal_index + 1],
+                        attrib.normals[3 * idx.normal_index + 2]
+                    });
+                } else {
+                    src.normals.push_back({0.0f, 0.0f, 0.0f});
+                }
+
+                if (idx.texcoord_index >= 0) {
+                    src.texCoords.push_back({
+                        attrib.texcoords[2 * idx.texcoord_index + 0],
+                        1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]
+                    });
+                } else {
+                    src.texCoords.push_back({0.0f, 0.0f});
+                }
+            }
+            src.indices.push_back(uniqueMap[key]);
+        }
+    }
+
+    // Compute smooth vertex normals if the OBJ has none
+    bool hasNormals = false;
+    for (const auto& n : src.normals) {
+        if (glm::dot(n, n) > 0.0f) { hasNormals = true; break; }
+    }
+    if (!hasNormals && src.indices.size() >= 3) {
+        std::vector<glm::vec3> accum(src.positions.size(), glm::vec3(0.0f));
+        for (size_t i = 0; i + 2 < src.indices.size(); i += 3) {
+            uint32_t i0 = src.indices[i];
+            uint32_t i1 = src.indices[i + 1];
+            uint32_t i2 = src.indices[i + 2];
+            glm::vec3 faceN = glm::cross(
+                src.positions[i1] - src.positions[i0],
+                src.positions[i2] - src.positions[i0]);
+            accum[i0] += faceN;
+            accum[i1] += faceN;
+            accum[i2] += faceN;
+        }
+        for (auto& n : accum) {
+            float len2 = glm::dot(n, n);
+            n = (len2 > 1e-12f) ? n / std::sqrt(len2) : glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+        src.normals = std::move(accum);
+    }
+
+    WelzlSphere ws = computeMinEnclosingSphere(src.positions);
+    src.boundingSphereCenter = ws.center;
+    src.boundingSphereRadius = ws.radius;
+    src.texturePath = texturePath;
+
+    int idx = static_cast<int>(m_modelSources.size());
+    m_modelSources.push_back(std::move(src));
+    LOG_INFO("Loaded model '" + objPath + "': " +
+             std::to_string(m_modelSources.back().positions.size()) + " vertices, " +
+             std::to_string(m_modelSources.back().indices.size()) + " indices" +
+             (texturePath.empty() ? "" : " (textured)"));
+    return idx;
+}
+
+void Application::createDummyTexture() {
+    // 1x1 white pixel
+    uint32_t white = 0xFFFFFFFF;
+    vk::ImageCreateInfo imageInfo;
+    imageInfo.imageType = vk::ImageType::e2D;
+    imageInfo.extent = vk::Extent3D{1, 1, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = vk::Format::eR8G8B8A8Unorm;
+    imageInfo.tiling = vk::ImageTiling::eOptimal;
+    imageInfo.initialLayout = vk::ImageLayout::eUndefined;
+    imageInfo.usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled;
+    imageInfo.samples = vk::SampleCountFlagBits::e1;
+    m_dummyTextureImage = m_vulkanDevice->get().createImage(imageInfo);
+
+    auto memReqs = m_dummyTextureImage.getMemoryRequirements();
+    vk::MemoryAllocateInfo allocInfo;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = m_vulkanDevice->findMemoryType(memReqs.memoryTypeBits,
+        vk::MemoryPropertyFlagBits::eDeviceLocal);
+    m_dummyTextureMemory = m_vulkanDevice->get().allocateMemory(allocInfo);
+    m_dummyTextureImage.bindMemory(*m_dummyTextureMemory, 0);
+
+    // Upload pixel
+    {
+        Buffer staging(m_vulkanDevice.get(), {4, vk::BufferUsageFlagBits::eTransferSrc,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
+        staging.copyFrom(&white, 4);
+
+        auto& cmd = m_commandBuffers[0];
+        cmd.reset();
+        vk::CommandBufferBeginInfo beginInfo;
+        beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        cmd.begin(beginInfo);
+
+        vk::ImageMemoryBarrier barrier;
+        barrier.oldLayout = vk::ImageLayout::eUndefined;
+        barrier.newLayout = vk::ImageLayout::eTransferDstOptimal;
+        barrier.image = *m_dummyTextureImage;
+        barrier.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+        barrier.srcAccessMask = {};
+        barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+        cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+            vk::PipelineStageFlagBits::eTransfer, {}, nullptr, nullptr, barrier);
+
+        vk::BufferImageCopy region;
+        region.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1};
+        region.imageExtent = vk::Extent3D{1, 1, 1};
+        cmd.copyBufferToImage(*staging.get(), *m_dummyTextureImage,
+            vk::ImageLayout::eTransferDstOptimal, region);
+
+        barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+        barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+        cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eComputeShader, {}, nullptr, nullptr, barrier);
+
+        cmd.end();
+        vk::SubmitInfo submitInfo;
+        submitInfo.setCommandBuffers(*cmd);
+        m_vulkanDevice->getGraphicsQueue().submit(submitInfo, nullptr);
+        m_vulkanDevice->waitIdle();
+    }
+
+    vk::ImageViewCreateInfo viewInfo;
+    viewInfo.image = *m_dummyTextureImage;
+    viewInfo.viewType = vk::ImageViewType::e2D;
+    viewInfo.format = vk::Format::eR8G8B8A8Unorm;
+    viewInfo.subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    m_dummyTextureView = m_vulkanDevice->get().createImageView(viewInfo);
+
+    vk::SamplerCreateInfo samplerInfo;
+    samplerInfo.magFilter = vk::Filter::eLinear;
+    samplerInfo.minFilter = vk::Filter::eLinear;
+    samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat;
+    samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat;
+    m_textureSampler = m_vulkanDevice->get().createSampler(samplerInfo);
+
+    LOG_INFO("Dummy texture and sampler created");
+}
+
+void Application::createTextures() {
+    while (m_textures.size() < m_modelSources.size()) {
+        size_t i = m_textures.size();
+        if (!m_modelSources[i].texturePath.empty()) {
+            TextureConfig cfg;
+            cfg.filepath = m_modelSources[i].texturePath;
+            m_textures.push_back(std::make_unique<Texture>(m_vulkanDevice.get(), cfg));
+        } else {
+            m_textures.push_back(nullptr);
+        }
+    }
+}
+
+void Application::createEnvmap() {
+    TextureConfig cfg;
+    cfg.filepath = "assets/textures/envmap.jpg";
+    cfg.addressMode = vk::SamplerAddressMode::eRepeat;
+    cfg.magFilter = vk::Filter::eLinear;
+    cfg.minFilter = vk::Filter::eLinear;
+    m_envmapTexture = std::make_unique<Texture>(m_vulkanDevice.get(), cfg);
+    LOG_INFO("Envmap texture created");
+}
+
+void Application::createModelDataBuffers() {
+    createGeometryBuffers();
+}
+
+void Application::createGeometryBuffers() {
+    m_vertexBuffers.clear();
+    m_indexBuffers.clear();
+    m_modelRefBuffers.clear();
+
+    std::vector<GPUVertex> mergedVerts;
+    std::vector<uint32_t> mergedIndices;
+
+    // Build per-source offsets (each model source gets one copy)
+    for (auto& src : m_modelSources) {
+        src.vertexOffset = static_cast<uint32_t>(mergedVerts.size());
+        src.firstIndex  = static_cast<uint32_t>(mergedIndices.size());
+        src.indexCount  = static_cast<uint32_t>(src.indices.size());
+
+        for (size_t v = 0; v < src.positions.size(); v++) {
+            GPUVertex gv;
+            gv.position = src.positions[v];
+            gv.normal = v < src.normals.size() ? src.normals[v] : glm::vec3(0.0f);
+            gv.texCoord = v < src.texCoords.size() ? src.texCoords[v] : glm::vec2(0.0f);
+            gv._pad[0] = 0.0f;
+            gv._pad[1] = 0.0f;
+            mergedVerts.push_back(gv);
+        }
+        mergedIndices.insert(mergedIndices.end(), src.indices.begin(), src.indices.end());
+    }
+
+    if (mergedVerts.empty()) {
+        mergedVerts.push_back({});
+        mergedIndices.push_back(0);
+    }
+
+    // Apply source offsets to model refs
+    for (size_t i = 0; i < m_modelRefs.size(); i++) {
+        const auto& src = m_modelSources[m_modelRefSourceIdx[i]];
+        m_modelRefs[i].vertexOffset = src.vertexOffset;
+        m_modelRefs[i].firstIndex  = src.firstIndex;
+        m_modelRefs[i].indexCount  = src.indexCount;
+        m_modelRefs[i].boundingSphereCenter = src.boundingSphereCenter;
+        m_modelRefs[i].boundingSphereRadius = src.boundingSphereRadius;
+        m_modelRefs[i].invTransform = glm::inverse(m_modelRefTransforms[i].transform());
+        m_modelRefs[i].textureIndex = static_cast<int32_t>(m_modelRefSourceIdx[i]);
+    }
+
+    for (size_t i = 0; i < m_framesInFlight; i++) {
+        m_vertexBuffers.push_back(std::make_unique<Buffer>(
+            Buffer::createBuffer(m_vulkanDevice.get(),
+                kMaxVertices * sizeof(GPUVertex),
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
+        m_vertexBuffers.back()->copyFrom(mergedVerts.data(), mergedVerts.size() * sizeof(GPUVertex));
+
+        m_indexBuffers.push_back(std::make_unique<Buffer>(
+            Buffer::createBuffer(m_vulkanDevice.get(),
+                kMaxIndices * sizeof(uint32_t),
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
+        m_indexBuffers.back()->copyFrom(mergedIndices.data(), mergedIndices.size() * sizeof(uint32_t));
+
+        m_modelRefBuffers.push_back(std::make_unique<Buffer>(
+            Buffer::createBuffer(m_vulkanDevice.get(),
+                kMaxModelRefs * sizeof(ModelRef),
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent)));
+        m_modelRefBuffers.back()->copyFrom(m_modelRefs.data(), m_modelRefs.size() * sizeof(ModelRef));
+    }
+
+    setModelRefsDirty();
+    LOG_INFO("Geometry built: " + std::to_string(mergedVerts.size()) + " vertices, " +
+             std::to_string(mergedIndices.size()) + " indices, " +
+             std::to_string(m_modelRefs.size()) + " model refs");
+}
 
 void Application::createRtStorageImage() {
     vk::ImageCreateInfo imageInfo;
@@ -832,7 +1054,7 @@ void Application::createRtStorageImage() {
             cmd.end();
 
             vk::SubmitInfo submitInfo;
-            submitInfo.setCommandBuffers(cmd);
+            submitInfo.setCommandBuffers(*m_commandBuffers[0]);
             m_vulkanDevice->getGraphicsQueue().submit(submitInfo, nullptr);
             m_vulkanDevice->waitIdle();
         }
@@ -863,6 +1085,8 @@ void Application::createRtStorageImage() {
 // ── RT resource descriptor set ───────────────────────────────────
 
 void Application::createRtResourceDescriptorSet() {
+    m_rtDescriptorSets.clear(); // free old descriptors back to pool
+
     std::vector<vk::DescriptorSetLayout> layouts(m_framesInFlight, *m_rtResourceSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo;
     allocInfo.descriptorPool = *m_descriptorPool;
@@ -914,6 +1138,87 @@ void Application::createRtResourceDescriptorSet() {
             write.dstArrayElement = 0;
             write.descriptorType = vk::DescriptorType::eStorageBuffer;
             write.setBufferInfo(bufferInfo);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
+
+        // b3: merged vertex SSBO
+        if (!m_vertexBuffers.empty()) {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.buffer = *m_vertexBuffers[i]->get();
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
+
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 3;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eStorageBuffer;
+            write.setBufferInfo(bufferInfo);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
+
+        // b4: merged index SSBO
+        if (!m_indexBuffers.empty()) {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.buffer = *m_indexBuffers[i]->get();
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
+
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 4;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eStorageBuffer;
+            write.setBufferInfo(bufferInfo);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
+
+        // b5: ModelRef SSBO
+        if (!m_modelRefBuffers.empty()) {
+            vk::DescriptorBufferInfo bufferInfo;
+            bufferInfo.buffer = *m_modelRefBuffers[i]->get();
+            bufferInfo.offset = 0;
+            bufferInfo.range = VK_WHOLE_SIZE;
+
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 5;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eStorageBuffer;
+            write.setBufferInfo(bufferInfo);
+            m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
+        }
+
+        // b6: texture array (combined image samplers)
+        std::array<vk::DescriptorImageInfo, kMaxTextures> texInfos;
+        for (size_t t = 0; t < kMaxTextures; t++) {
+            if (t < m_textures.size() && m_textures[t]) {
+                texInfos[t].imageView = m_textures[t]->getImageView();
+            } else {
+                texInfos[t].imageView = *m_dummyTextureView;
+            }
+            texInfos[t].sampler = *m_textureSampler;
+            texInfos[t].imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        }
+
+        vk::WriteDescriptorSet texWrite;
+        texWrite.dstSet = *m_rtDescriptorSets[i];
+        texWrite.dstBinding = 6;
+        texWrite.dstArrayElement = 0;
+        texWrite.descriptorCount = kMaxTextures;
+        texWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        texWrite.setImageInfo(texInfos);
+        m_vulkanDevice->get().updateDescriptorSets(texWrite, nullptr);
+
+        // b7: envmap
+        {
+            vk::WriteDescriptorSet write;
+            write.dstSet = *m_rtDescriptorSets[i];
+            write.dstBinding = 7;
+            write.dstArrayElement = 0;
+            write.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+            std::array writeInfos = { m_envmapTexture->getDescriptorInfo() };
+            write.setImageInfo(writeInfos);
             m_vulkanDevice->get().updateDescriptorSets(write, nullptr);
         }
     }
@@ -1067,58 +1372,7 @@ void Application::createFullscreenDescriptorSet() {
 
 // ── Default scene spheres ─────────────────────────────────────────
 
-void Application::initSpheres() {
-    m_spheres.clear();
-
-    // Ground-like large sphere (material 0)
-    m_spheres.push_back({
-        glm::vec3(0.0f, -100.5f, 0.0f),
-        100.0f,
-        0,                     // materialIndex
-        {0.0f, 0.0f, 0.0f}    // _pad
-    });
-
-    // Center sphere (material 1)
-    m_spheres.push_back({
-        glm::vec3(0.0f, 0.0f, 0.0f),
-        1.0f,
-        1,
-        {0.0f, 0.0f, 0.0f}
-    });
-
-    // Left sphere (material 2)
-    m_spheres.push_back({
-        glm::vec3(-2.5f, 0.0f, 0.5f),
-        1.0f,
-        2,
-        {0.0f, 0.0f, 0.0f}
-    });
-
-    // Right sphere (material 3)
-    m_spheres.push_back({
-        glm::vec3(2.5f, 0.0f, 0.5f),
-        1.0f,
-        3,
-        {0.0f, 0.0f, 0.0f}
-    });
-
-    // Small sphere on top (material 4)
-    m_spheres.push_back({
-        glm::vec3(0.0f, 2.0f, 1.0f),
-        0.6f,
-        4,
-        {0.0f, 0.0f, 0.0f}
-    });
-
-    setSpheresDirty();
-    LOG_INFO("Default scene initialized with " + std::to_string(m_spheres.size()) + " spheres");
-}
-
 void Application::cleanupRtSwapChainResources() {
-    m_fullscreenDescriptorSets.clear();
-    m_fullscreenPipelineLayout = nullptr;
-    m_rtDescriptorSets.clear();
-    m_rtPipelineLayout = nullptr;
     m_rtOutputSampler = nullptr;
     m_rtOutputImageViews.clear();
     m_rtOutputImages.clear();
@@ -1136,22 +1390,41 @@ void Application::recreateSwapChain() {
     cleanupRtSwapChainResources();
 
     m_swapChainManager->recreate(m_windowWidth, m_windowHeight);
+    m_framesInFlight = m_swapChainManager->getImageCount();
     createRenderPass();
-    createDescriptorSetLayouts();
-    createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
-    createUniformBuffers();
-    createDescriptorPool();
-    createDescriptorSets();
-    createCommandBuffers();
 
-    // Recreate RT resources (size-dependent)
     createRtStorageImage();
-    createRtComputePipeline();
-    createMaterialBuffer();
-    createRtResourceDescriptorSet();
-    createFullscreenDescriptorSet();
+
+    // Update output image bindings on existing descriptor sets in-place
+    for (size_t i = 0; i < m_framesInFlight; ++i) {
+        vk::DescriptorImageInfo imageInfo;
+        imageInfo.imageView = *m_rtOutputImageViews[i];
+        imageInfo.imageLayout = vk::ImageLayout::eGeneral;
+
+        vk::WriteDescriptorSet rtWrite;
+        rtWrite.dstSet = *m_rtDescriptorSets[i];
+        rtWrite.dstBinding = 1;
+        rtWrite.dstArrayElement = 0;
+        rtWrite.descriptorType = vk::DescriptorType::eStorageImage;
+        rtWrite.setImageInfo(imageInfo);
+        m_vulkanDevice->get().updateDescriptorSets(rtWrite, nullptr);
+
+        vk::DescriptorImageInfo samplerInfo;
+        samplerInfo.imageView = *m_rtOutputImageViews[i];
+        samplerInfo.imageLayout = vk::ImageLayout::eGeneral;
+        samplerInfo.sampler = *m_rtOutputSampler;
+
+        vk::WriteDescriptorSet fsWrite;
+        fsWrite.dstSet = *m_fullscreenDescriptorSets[i];
+        fsWrite.dstBinding = 0;
+        fsWrite.dstArrayElement = 0;
+        fsWrite.descriptorType = vk::DescriptorType::eCombinedImageSampler;
+        fsWrite.setImageInfo(samplerInfo);
+        m_vulkanDevice->get().updateDescriptorSets(fsWrite, nullptr);
+    }
+
     createFullscreenPipeline();
 
     m_camera.SetAspectRatio(static_cast<float>(m_windowWidth) / m_windowHeight);
@@ -1181,42 +1454,121 @@ void Application::drawFrame() {
     }
 
     ImGui::Spacing();
-    ImGui::Text("Instances");
     ImGui::Separator();
-    for (size_t i = 0; i < m_instances.size(); i++) {
-        auto& instance = m_instances.at(i);
-        auto name = instance.name + std::to_string(i);
-        ImGui::PushID(name.c_str());
-        if (ImGui::CollapsingHeader(name.c_str())) {
-            ImGui::DragFloat3("Translation", glm::value_ptr(instance.transform.translation), 0.01f);
-            ImGui::DragFloat3("Rotation", glm::value_ptr(instance.transform.rotation), 0.01f);
-            float scale = instance.transform.scale.x;
-            ImGui::DragFloat("Scale", &scale, 0.01f);
-            instance.transform.scale = glm::vec3(scale);
-            ImGui::ColorEdit4("Color", glm::value_ptr(instance.color));
+    ImGui::Text("Model Refs");
+    ImGui::Separator();
+    for (int i = 0; i < static_cast<int>(m_modelRefs.size()); i++) {
+        ImGui::PushID(i);
+        auto& src = m_modelSources[m_modelRefSourceIdx[i]];
+        std::string header = src.name + " [" + std::to_string(i) + "]";
+        if (ImGui::CollapsingHeader(header.c_str())) {
+            bool changed = false;
+            auto& t = m_modelRefTransforms[i];
+            changed |= ImGui::DragFloat3("Translation", glm::value_ptr(t.translation), 0.05f);
+            changed |= ImGui::DragFloat3("Rotation", glm::value_ptr(t.rotation), 0.01f);
+            float sx = t.scale.x;
+            if (ImGui::DragFloat("Scale", &sx, 0.01f)) { t.scale = glm::vec3(sx); changed = true; }
+            changed |= ImGui::ColorEdit4("Color", glm::value_ptr(m_modelRefs[i].color));
+
+            std::vector<std::string> matNameStorage;
+            for (size_t m = 0; m < m_materials.size(); m++) {
+                matNameStorage.push_back("Material " + std::to_string(m));
+            }
+            std::vector<const char*> matNames;
+            for (auto& s : matNameStorage) {
+                matNames.push_back(s.c_str());
+            }
+            int matIdx = static_cast<int>(m_modelRefs[i].materialId);
+            if (ImGui::Combo("Material", &matIdx, matNames.data(), static_cast<int>(matNames.size()))) {
+                m_modelRefs[i].materialId = static_cast<uint32_t>(matIdx);
+                changed = true;
+            }
+
+            if (changed) {
+                m_modelRefs[i].invTransform = glm::inverse(t.transform());
+                setModelRefsDirty();
+            }
+            if (ImGui::Button("Remove")) {
+                m_modelRefs.erase(m_modelRefs.begin() + i);
+                m_modelRefSourceIdx.erase(m_modelRefSourceIdx.begin() + i);
+                m_modelRefTransforms.erase(m_modelRefTransforms.begin() + i);
+                setModelRefsDirty();
+                ImGui::PopID();
+                i--;
+                continue;
+            }
         }
         ImGui::PopID();
+    }
+    if (m_modelRefs.size() < kMaxModelRefs && !m_modelSources.empty()) {
+        static int selectedSource = 0;
+        if (selectedSource >= static_cast<int>(m_modelSources.size()))
+            selectedSource = 0;
+        std::vector<std::string> srcNames;
+        std::vector<const char*> srcItems;
+        for (size_t s = 0; s < m_modelSources.size(); s++) {
+            srcNames.push_back(m_modelSources[s].name);
+            srcItems.push_back(srcNames.back().c_str());
+        }
+        ImGui::SetNextItemWidth(200);
+        ImGui::Combo("##srcCombo", &selectedSource, srcItems.data(), static_cast<int>(srcItems.size()));
+        ImGui::SameLine();
+        if (ImGui::Button("Add ModelRef")) {
+            const auto& src = m_modelSources[selectedSource];
+            ModelRef ref{};
+            ref.vertexOffset = src.vertexOffset;
+            ref.firstIndex  = src.firstIndex;
+            ref.indexCount  = src.indexCount;
+            ref.boundingSphereCenter = src.boundingSphereCenter;
+            ref.boundingSphereRadius = src.boundingSphereRadius;
+            ref.textureIndex = selectedSource;
+            m_modelRefs.push_back(ref);
+            m_modelRefSourceIdx.push_back(selectedSource);
+            m_modelRefTransforms.push_back(Transform{});
+            setModelRefsDirty();
+        }
     }
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Text("Point Lights");
+    ImGui::Text("Lights");
     ImGui::Separator();
 
-    for (int i = 0; i < static_cast<int>(m_pointLights.size()); i++) {
+    for (int i = 0; i < static_cast<int>(m_lights.size()); i++) {
         ImGui::PushID(i);
-        std::string header = "Light " + std::to_string(i);
+        const char* typeNames[] = {"Point", "Spot", "Directional"};
+        std::string header = "Light " + std::to_string(i) + " (" + typeNames[m_lights[i].type] + ")";
         if (ImGui::CollapsingHeader(header.c_str())) {
             bool changed = false;
-            changed |= ImGui::DragFloat3("Position", glm::value_ptr(m_pointLights[i].position), 0.1f);
-            changed |= ImGui::ColorEdit3("Color", glm::value_ptr(m_pointLights[i].color));
-            changed |= ImGui::DragFloat("Intensity", &m_pointLights[i].intensity, 0.1f, 0.0f, 100.0f);
-            changed |= ImGui::DragFloat("Max Distance", &m_pointLights[i].maxDistance, 0.1f, 0.0f, 100.0f);
-            if (changed) {
-                setLightsDirty();
+            int type = m_lights[i].type;
+            if (ImGui::Combo("Type", &type, typeNames, 3)) {
+                m_lights[i].type = type;
+                changed = true;
             }
+            changed |= ImGui::ColorEdit3("Color", glm::value_ptr(m_lights[i].color));
+            changed |= ImGui::DragFloat("Intensity", &m_lights[i].intensity, 0.1f, 0.0f, 100.0f);
+            if (m_lights[i].type != 2) { // not directional
+                changed |= ImGui::DragFloat3("Position", glm::value_ptr(m_lights[i].position), 0.1f);
+                changed |= ImGui::DragFloat("Max Distance", &m_lights[i].maxDistance, 0.1f, 0.0f, 200.0f);
+            }
+            if (m_lights[i].type >= 1) { // spot or directional
+                changed |= ImGui::DragFloat3("Direction", glm::value_ptr(m_lights[i].direction), 0.1f);
+            }
+            if (m_lights[i].type == 1) { // spot
+                float innerDeg = glm::degrees(std::acos(m_lights[i].innerCos));
+                float outerDeg = glm::degrees(std::acos(m_lights[i].outerCos));
+                if (ImGui::DragFloat("Inner Angle", &innerDeg, 0.5f, 0.0f, 90.0f)) {
+                    m_lights[i].innerCos = std::cos(glm::radians(innerDeg));
+                    changed = true;
+                }
+                if (ImGui::DragFloat("Outer Angle", &outerDeg, 0.5f, 0.0f, 90.0f)) {
+                    m_lights[i].outerCos = std::cos(glm::radians(outerDeg));
+                    changed = true;
+                }
+            }
+            if (changed) setLightsDirty();
             if (ImGui::Button("Remove Light")) {
-                m_pointLights.erase(m_pointLights.begin() + i);
+                m_lights.erase(m_lights.begin() + i);
                 setLightsDirty();
                 ImGui::PopID();
                 i--;
@@ -1226,7 +1578,16 @@ void Application::drawFrame() {
         ImGui::PopID();
     }
     if (ImGui::Button("Add Light")) {
-        m_pointLights.push_back({{0.0f, 3.0f, 0.0f}, 10.0f, {1.0f, 1.0f, 1.0f}, 20.0f});
+        LightData l{};
+        l.type = 0;
+        l.position = {0.0f, 3.0f, 0.0f};
+        l.color = {1.0f, 1.0f, 1.0f};
+        l.intensity = 10.0f;
+        l.maxDistance = 20.0f;
+        l.direction = {0.0f, -1.0f, 0.0f};
+        l.innerCos = std::cos(glm::radians(15.0f));
+        l.outerCos = std::cos(glm::radians(30.0f));
+        m_lights.push_back(l);
         setLightsDirty();
     }
 
@@ -1244,10 +1605,12 @@ void Application::drawFrame() {
             changed |= ImGui::DragFloat("Radius", &m_spheres[i].radius, 0.05f, 0.01f, 100.0f);
 
             std::vector<std::string> matNameStorage;
-            std::vector<const char*> matNames;
             for (size_t m = 0; m < m_materials.size(); m++) {
                 matNameStorage.push_back("Material " + std::to_string(m));
-                matNames.push_back(matNameStorage.back().c_str());
+            }
+            std::vector<const char*> matNames;
+            for (auto& s : matNameStorage) {
+                matNames.push_back(s.c_str());
             }
             int matIdx = static_cast<int>(m_spheres[i].materialIndex);
             if (ImGui::Combo("Material", &matIdx, matNames.data(), static_cast<int>(matNames.size()))) {
@@ -1320,8 +1683,9 @@ void Application::drawFrame() {
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Text("Global");
+    ImGui::Text("Global Illumination");
     ImGui::Separator();
+    ImGui::DragFloat("Ambient Strength", &m_ambientStrength, 0.01f, 0.0f, 1.0f);
     ImGui::DragFloat("Diffuse Strength", &m_diffuseStrength, 0.01f, 0.0f, 1.0f);
     ImGui::DragFloat("Specular Strength", &m_specularStrength, 0.01f, 0.0f, 2.0f);
 
@@ -1359,6 +1723,8 @@ void Application::drawFrame() {
     updateLightBuffer(m_currentFrame);
     updateSphereBuffer(m_currentFrame);
     updateMaterialBuffer(m_currentFrame);
+    updateModelRefBuffer(m_currentFrame);
+
 
     m_commandBuffers[m_currentFrame].reset();
 
@@ -1381,8 +1747,10 @@ void Application::drawFrame() {
 
     RTGlobalConstants rtPC{};
     rtPC.sphereCount = static_cast<uint32_t>(m_spheres.size());
-    rtPC.lightCount = static_cast<uint32_t>(m_pointLights.size());
+    rtPC.lightCount = static_cast<uint32_t>(m_lights.size());
     rtPC.materialCount = static_cast<uint32_t>(m_materials.size());
+    rtPC.modelRefCount = static_cast<uint32_t>(m_modelRefs.size());
+    rtPC.ambientStrength = m_ambientStrength;
     rtPC.diffuseStrength = m_diffuseStrength;
     rtPC.specularStrength = m_specularStrength;
     m_commandBuffers[m_currentFrame].pushConstants<RTGlobalConstants>(

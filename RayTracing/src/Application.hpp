@@ -7,13 +7,11 @@
 #include <memory>
 #include <array>
 
-#include "Vertex.h"
 #include "Camera.h"
 #include "Transform.h"
-#include "Model.h"
-#include "Instance.h"
 #include "Light.h"
 #include "Scene.h"
+#include "vulkan/Texture.hpp"
 
 namespace RYRayTracing {
     class WindowManager;
@@ -34,6 +32,8 @@ struct RTGlobalConstants {
     uint32_t sphereCount;
     uint32_t lightCount;
     uint32_t materialCount;
+    uint32_t modelRefCount;
+    float ambientStrength;
     float diffuseStrength;
     float specularStrength;
 };
@@ -58,21 +58,17 @@ private:
     std::unique_ptr<PipelineManager> m_pipelineManager;
     std::unique_ptr<CommandManager> m_commandManager;
 
-    std::vector<Model> m_models;
-    std::vector<Instance> m_instances;
-
-    // ── Descriptor set layouts (organized by logical data group) ──
+    // ── Descriptor set layouts(organized by logical data group) ──
     /// Set 0 for "main" (Blinn-Phong) and "rt_main" (compute) pipelines.
     /// b0: CameraData UBO, b1: point lights SSBO
     vk::raii::DescriptorSetLayout m_perFrameSetLayout = nullptr;
 
-    /// Shared combined-image-sampler layout used by:
-    ///   - material textures (set 1 of "main" pipeline)
-    ///   - fullscreen RT output display (set 0 of "fullscreen" pipeline)
+    /// Combined-image-sampler layout for fullscreen RT output display.
     vk::raii::DescriptorSetLayout m_samplerSetLayout = nullptr;
 
     /// Set 1 for the "rt_main" compute pipeline.
-    /// b0: sphere SSBO, b1: output storage image, b2: material SSBO
+    /// b0: spheres  b1: output image  b2: materials
+    /// b3: vertices  b4: indices  b5: modelRefs
     vk::raii::DescriptorSetLayout m_rtResourceSetLayout = nullptr;
 
     // ── Single descriptor pool (ImGui has its own) ───────────────
@@ -101,14 +97,11 @@ private:
     void setSpheresDirty() { m_spheresDirty = m_framesInFlight; }
 
     // ── Shaders ──────────────────────────────────────────────────
-    std::unique_ptr<ShaderModule> m_vertexShader;
-    std::unique_ptr<ShaderModule> m_fragmentShader;
     std::unique_ptr<ShaderModule> m_rtComputeShader;
     std::unique_ptr<ShaderModule> m_fullscreenVertShader;
     std::unique_ptr<ShaderModule> m_fullscreenFragShader;
 
     // ── Pipeline layouts (derived from descriptor set layouts) ───
-    vk::raii::PipelineLayout m_blinnPhongPipelineLayout = nullptr; // {perFrame, sampler}
     vk::raii::PipelineLayout m_rtPipelineLayout = nullptr;         // {perFrame, rtResource}
     vk::raii::PipelineLayout m_fullscreenPipelineLayout = nullptr; // {sampler}
 
@@ -117,6 +110,10 @@ private:
     std::vector<vk::raii::DeviceMemory> m_rtOutputImagesMemory;
     std::vector<vk::raii::ImageView> m_rtOutputImageViews;
     vk::raii::Sampler m_rtOutputSampler = nullptr;
+    vk::raii::Sampler m_textureSampler = nullptr;
+    vk::raii::Image m_dummyTextureImage = nullptr;
+    vk::raii::DeviceMemory m_dummyTextureMemory = nullptr;
+    vk::raii::ImageView m_dummyTextureView = nullptr;
 
     // ── Scene primitives for RT ──────────────────────────────────
     static constexpr size_t kMaxSpheres = 32;
@@ -129,6 +126,32 @@ private:
     bool isMaterialsDirty() { bool positive = m_materialsDirty > 0; m_materialsDirty -= positive; return positive; }
     void setMaterialsDirty() { m_materialsDirty = m_framesInFlight; }
 
+    // ── Model data for RT ───────────────────────────────────────
+    static constexpr size_t kMaxVertices = 1'000'000;
+    static constexpr size_t kMaxIndices  = 2'000'000;
+    static constexpr size_t kMaxModelRefs = 64;
+    static constexpr size_t kMaxTextures = 8;
+    std::vector<ModelSource>           m_modelSources;
+    std::unique_ptr<Texture> m_envmapTexture;
+    std::vector<std::unique_ptr<Texture>> m_textures;          // parallel to m_modelSources
+    std::vector<ModelRef>              m_modelRefs;
+    std::vector<int>                   m_modelRefSourceIdx;
+    std::vector<Transform>             m_modelRefTransforms;
+    std::vector<std::unique_ptr<Buffer>> m_vertexBuffers;
+    std::vector<std::unique_ptr<Buffer>> m_indexBuffers;
+    std::vector<std::unique_ptr<Buffer>> m_modelRefBuffers;
+    int m_modelRefsDirty = m_framesInFlight;
+    bool isModelRefsDirty() { bool positive = m_modelRefsDirty > 0; m_modelRefsDirty -= positive; return positive; }
+    void setModelRefsDirty() { m_modelRefsDirty = m_framesInFlight; }
+    void createModelDataBuffers();
+    void createGeometryBuffers();
+    void updateModelRefBuffer(size_t currentFrame);
+    void createTextures();
+    void createEnvmap();
+    int addModelSource(const std::string& objPath, const std::string& texturePath = "");
+    void createDummyTexture();
+
+    float m_ambientStrength = 0.1f;
     float m_diffuseStrength = 0.5f;
     float m_specularStrength = 1.0f;
 
@@ -164,14 +187,11 @@ private:
 
     Transform m_cameraTransform;
     SceneCamera m_camera;
-    std::vector<PointLightData> m_pointLights;
+    std::vector<LightData> m_lights;
 
-    void createModels();
     void initVulkan();
     void initImGui();
     void initComponents();
-
-    void initSpheres();
 
     void cleanup();
     void recreateSwapChain();
@@ -189,7 +209,6 @@ private:
     void createDescriptorPool();       // single pool covering all set types
     void createDescriptorSets();       // per-frame + material sets
 
-    void createGraphicsPipeline();
     void createFramebuffers();
     void createCommandPool();
 

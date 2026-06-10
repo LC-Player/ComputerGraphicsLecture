@@ -2,6 +2,9 @@
 // Compute shader for real-time ray tracing.
 // Entry point: computeMain
 
+#define CHECKERBOARD_FLOOR 1
+#define FLOOR_SENTINEL 0xFFFFFFFFu
+
 struct CameraData {
     float4x4 viewProj;
     float4x4 invViewProj;
@@ -27,10 +30,15 @@ struct Sphere {
 };
 
 struct LightData {
-    float3 position;
-    float intensity;
+    float3 position;     // unused for directional
+    int type;            // 0=point, 1=spot, 2=directional
     float3 color;
-    float maxDistance;
+    float intensity;
+    float3 direction;    // spot / directional only
+    float maxDistance;   // point / spot only
+    float innerCos;      // cos(innerAngle), spot only
+    float outerCos;      // cos(outerAngle), spot only
+    float2 _pad;
 };
 
 struct Ray {
@@ -39,17 +47,43 @@ struct Ray {
 };
 
 struct HitResult {
-    int   hit;             // 1 if something was hit
-    float t;               // distance along ray to hit point
-    float3 point;          // world-space hit position
-    float3 normal;         // surface normal at hit point
-    uint  materialIndex;   // index into material array
+    int   hit;
+    float t;
+    float3 point;
+    float3 normal;
+    uint  materialIndex;
+    int   textureIndex;
+    float2 texCoord;
+};
+
+struct GPUVertex {
+    float3 position;       // offset 0,  align 16
+    float3 normal;         // offset 16, align 16
+    float2 texCoord;       // offset 32
+    float2 _pad;           // → 48 bytes
+};
+
+struct ModelRef {
+    uint   firstIndex;
+    uint   indexCount;
+    uint   vertexOffset;
+    uint   materialId;
+    float4x4 invTransform;
+    float4   color;
+    float3   boundingSphereCenter;
+    float    boundingSphereRadius;
+    int      textureIndex;
+    float    _pad0;
+    float    _pad1;
+    float    _pad2;
 };
 
 struct RTGlobalConstants {
     uint sphereCount;
     uint lightCount;
     uint materialCount;
+    uint modelRefCount;
+    float ambientStrength;
     float diffuseStrength;
     float specularStrength;
 };
@@ -62,14 +96,21 @@ struct RTGlobalConstants {
 [[vk::binding(0, 0)]] ConstantBuffer<CameraData> camera;
 [[vk::binding(1, 0)]] StructuredBuffer<LightData> lights;
 // Set 1: RT-specific resources
-[[vk::binding(0, 1)]] StructuredBuffer<Sphere>   spheres;
-[[vk::binding(1, 1)]] RWTexture2D<float4>        outputImage;
-[[vk::binding(2, 1)]] StructuredBuffer<Material>  materials;
+[[vk::binding(0, 1)]] StructuredBuffer<Sphere>    spheres;
+[[vk::binding(1, 1)]] RWTexture2D<float4>         outputImage;
+[[vk::binding(2, 1)]] StructuredBuffer<Material>   materials;
+[[vk::binding(3, 1)]] StructuredBuffer<GPUVertex>  vertices;
+[[vk::binding(4, 1)]] StructuredBuffer<uint>       indices;
+[[vk::binding(5, 1)]] StructuredBuffer<ModelRef>   modelRefs;
+[[vk::binding(6, 1)]] Sampler2D modelTextures[8];
+[[vk::binding(7, 1)]] Sampler2D envmap;
 
 // ── Ray-sphere intersection ───────────────────────────────────────
 
 bool intersectSphere(Ray ray, Sphere sphere, out float t0, out float t1)
 {
+    t0 = 0.0;
+    t1 = 0.0;
     float3 oc = ray.origin - sphere.center;
     float a = dot(ray.direction, ray.direction);
     float b = 2.0 * dot(oc, ray.direction);
@@ -80,6 +121,30 @@ bool intersectSphere(Ray ray, Sphere sphere, out float t0, out float t1)
     float sqrtD = sqrt(discriminant);
     t0 = (-b - sqrtD) / (2.0 * a);
     t1 = (-b + sqrtD) / (2.0 * a);
+    return true;
+}
+
+// ── Ray-triangle intersection (Möller–Trumbore) ─────────────────────
+
+bool intersectTriangle(Ray ray, float3 v0, float3 v1, float3 v2, out float t, out float2 uv)
+{
+    t = 0.0;
+    uv = float2(0.0);
+    float3 e1 = v1 - v0;
+    float3 e2 = v2 - v0;
+    float3 h = cross(ray.direction, e2);
+    float a = dot(e1, h);
+    if (abs(a) < 1e-7) return false;
+    float f = 1.0 / a;
+    float3 s = ray.origin - v0;
+    float u = f * dot(s, h);
+    if (u < 0.0 || u > 1.0) return false;
+    float3 q = cross(s, e1);
+    float v = f * dot(ray.direction, q);
+    if (v < 0.0 || u + v > 1.0) return false;
+    t = f * dot(e2, q);
+    if (t < 0.001) return false;
+    uv = float2(u, v);
     return true;
 }
 
@@ -123,7 +188,85 @@ HitResult traceScene(Ray ray)
         result.point = ray.origin + t * ray.direction;
         result.normal = normalize(result.point - spheres[i].center);
         result.materialIndex = spheres[i].materialIndex;
+        result.textureIndex = -1;
+        result.texCoord = float2(0.0);
     }
+
+    for (uint m = 0; m < pc.modelRefCount; m++) {
+        ModelRef ref = modelRefs[m];
+
+        // Transform ray to object space
+        float4 objOrigin4 = mul(ref.invTransform, float4(ray.origin, 1.0));
+        float4 objDir4    = mul(ref.invTransform, float4(ray.direction, 0.0));
+        float3 objOrigin   = objOrigin4.xyz;
+        float3 objDir      = objDir4.xyz;
+        Ray objRay;
+        objRay.origin = objOrigin;
+        objRay.direction = objDir;
+
+        // Bounding sphere early rejection
+        float3 oc = objOrigin - ref.boundingSphereCenter;
+        float a = dot(objDir, objDir);
+        float b = 2.0 * dot(oc, objDir);
+        float c = dot(oc, oc) - ref.boundingSphereRadius * ref.boundingSphereRadius;
+        float discriminant = b * b - 4.0 * a * c;
+        if (discriminant < 0.0) continue;
+
+        float sqrtD = sqrt(discriminant);
+        float bsNear = (-b - sqrtD) / (2.0 * a);
+        float bsFar  = (-b + sqrtD) / (2.0 * a);
+        if (bsFar < 0.001 || bsNear >= result.t) continue;
+
+        for (uint tri = 0; tri < ref.indexCount; tri += 3) {
+            uint i0 = indices[ref.firstIndex + tri + 0];
+            uint i1 = indices[ref.firstIndex + tri + 1];
+            uint i2 = indices[ref.firstIndex + tri + 2];
+
+            GPUVertex v0 = vertices[ref.vertexOffset + i0];
+            GPUVertex v1 = vertices[ref.vertexOffset + i1];
+            GPUVertex v2 = vertices[ref.vertexOffset + i2];
+
+            float tHit;
+            float2 uv;
+            if (!intersectTriangle(objRay, v0.position, v1.position, v2.position, tHit, uv)) continue;
+            if (tHit <= 0.001 || tHit >= result.t) continue;
+
+            // Interpolate normal
+            float w = 1.0 - uv.x - uv.y;
+            float3 objNormal = normalize(v0.normal * w + v1.normal * uv.x + v2.normal * uv.y);
+
+            // Transform normal to world space
+            float3 worldNormal = normalize(mul(objNormal, (float3x3)ref.invTransform));
+
+            result.hit = 1;
+            result.t = tHit;
+            result.point = ray.origin + tHit * ray.direction;
+            result.normal = worldNormal;
+            result.materialIndex = ref.materialId;
+            result.textureIndex = ref.textureIndex;
+            result.texCoord = v0.texCoord * (1.0 - uv.x - uv.y) + v1.texCoord * uv.x + v2.texCoord * uv.y;
+        }
+    }
+#if CHECKERBOARD_FLOOR
+    {
+        float denom = dot(ray.direction, float3(0.0, 1.0, 0.0));
+        if (abs(denom) > 1e-6) {
+            float t = -(ray.origin.y + 4.0) / denom;
+            if (t > 0.001 && t < result.t) {
+                float3 pt = ray.origin + t * ray.direction;
+                if (abs(pt.x) < 10.0 && pt.z > -30.0 && pt.z < -10.0) {
+                    result.hit = 1;
+                    result.t = t;
+                    result.point = pt;
+                    result.normal = float3(0.0, 1.0, 0.0);
+                    result.materialIndex = FLOOR_SENTINEL;
+                    result.textureIndex = -1;
+                    result.texCoord = float2(0.0);
+                }
+            }
+        }
+    }
+#endif
     return result;
 }
 
@@ -131,8 +274,11 @@ HitResult traceScene(Ray ray)
 
 float3 getBackground(float3 direction)
 {
-    float t = 0.5 * (direction.y + 1.0);
-    return lerp(float3(1.0, 0.0, 0.0), float3(0.0, 0.0, 1.0), t);
+    float3 dir = normalize(direction);
+    float2 uv;
+    uv.x = (atan2(dir.z, dir.x) + 3.1415926) / (2.0 * 3.1415926);
+    uv.y = (asin(clamp(dir.y, -1.0, 1.0)) + 3.1415926 * 0.5) / 3.1415926;
+    return envmap.SampleLevel(uv, 0.0).rgb;
 }
 
 // ── Shading ───────────────────────────────────────────────────────
@@ -160,7 +306,21 @@ float G_Smith(float NoV, float NoL, float roughness) {
     return G1_V * G1_L;
 }
 
-float3 computeDirectBRDF(HitResult hit, Ray ray, Material mat) {
+float3 computeDirectBRDF(HitResult hit, Ray ray, inout Material mat) {
+#if CHECKERBOARD_FLOOR
+    if (hit.materialIndex == FLOOR_SENTINEL) {
+        mat.roughness = 0.8;
+        mat.metallic = 0.0;
+        mat.transparency = 0.0;
+        mat.ior = 1.0;
+        bool white = (int(0.5 * hit.point.x + 1000.0) + int(0.5 * hit.point.z)) & 1;
+        mat.diffuseColor = white ? float3(0.8, 0.8, 0.8) : float3(0.3, 0.2, 0.1);
+    }
+#endif
+    if (hit.textureIndex >= 0) {
+        float4 texColor = modelTextures[hit.textureIndex].SampleLevel(hit.texCoord, 0.0);
+        mat.diffuseColor *= texColor.rgb;
+    }
     float3 V = -ray.direction;
     float3 N = hit.normal;
     float3 Lo = float3(0.0, 0.0, 0.0);
@@ -169,15 +329,38 @@ float3 computeDirectBRDF(HitResult hit, Ray ray, Material mat) {
     float3 F0 = lerp(0.04, mat.diffuseColor, mat.metallic);
 
     for (uint i = 0; i < pc.lightCount; i++) {
-        float3 L = normalize(lights[i].position - hit.point);
+        float3 L;
+        float lightDistance;
+        float attenuation;
+
+        if (lights[i].type == 2) {
+            // Directional light
+            L = normalize(-lights[i].direction);
+            lightDistance = 1e10;
+            attenuation = 1.0;
+        } else {
+            // Point or spot light
+            L = normalize(lights[i].position - hit.point);
+            lightDistance = length(lights[i].position - hit.point);
+            attenuation = 1.0 / (lightDistance * lightDistance);
+
+            if (lights[i].type == 1) {
+                // Spot light cone attenuation
+                float3 spotDir = normalize(-lights[i].direction);
+                float cosTheta = dot(normalize(lights[i].position - hit.point), spotDir);
+                float spotAtten = smoothstep(lights[i].outerCos, lights[i].innerCos, cosTheta);
+                attenuation *= spotAtten;
+            }
+        }
+
         float3 H = normalize(V + L);
         float NoL = max(0.0, dot(N, L));
         if (NoL <= 0.0) continue;
 
-        float lightDistance = length(lights[i].position - hit.point);
         float3 shadowOrig = hit.point + N * 2e-3;
+        float shadowMaxDist = (lights[i].type == 2) ? 1e10 : lightDistance;
         HitResult shadowHit = traceScene(Ray(shadowOrig, L));
-        if (shadowHit.hit != 0 && shadowHit.t < lightDistance) continue;
+        if (shadowHit.hit != 0 && shadowHit.t < shadowMaxDist) continue;
 
         float NoV = max(0.001, dot(N, V));
         float NoH = max(0.001, dot(N, H));
@@ -193,10 +376,10 @@ float3 computeDirectBRDF(HitResult hit, Ray ray, Material mat) {
         // 考虑到透明物体的内部不应该产生不透明的漫反射，结合真实感压制漫反射
         float3 diffuse = kD * mat.diffuseColor * (1.0 - mat.transparency) / 3.1415926;
 
-        float attenuation = 1.0 / (lightDistance * lightDistance);  
         float3 radiance = lights[i].color * lights[i].intensity * attenuation;
         Lo += (diffuse + specular) * radiance * NoL;
     }
+    Lo += mat.diffuseColor * pc.ambientStrength * (1.0 - mat.metallic);
     Lo += mat.emission;
     return Lo;
 }
@@ -226,6 +409,21 @@ float3 castRay(Ray rayInitial) {
 
         if (hit.hit != 0)
         {
+#if CHECKERBOARD_FLOOR
+            if (hit.materialIndex == FLOOR_SENTINEL) {
+                Material floorMat;
+                floorMat.diffuseColor = float3(0.0); // filled by computeDirectBRDF
+                floorMat.roughness = 0.8;
+                floorMat.metallic = 0.0;
+                floorMat.transparency = 0.0;
+                floorMat.ior = 1.0;
+                floorMat.emission = float3(0.0);
+                float3 direct = computeDirectBRDF(hit, ray, floorMat);
+                color += throughput * direct;
+                // No reflection / refraction for floor
+                continue;
+            }
+#endif
             Material mat = materials[hit.materialIndex];
             float3 direct = computeDirectBRDF(hit, ray, mat);
             color += throughput * direct;
