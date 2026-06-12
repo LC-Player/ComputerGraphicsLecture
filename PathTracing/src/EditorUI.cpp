@@ -33,12 +33,15 @@ void EditorUI::drawCameraPanel()
 {
     ImGui::Text("Camera");
     ImGui::Separator();
-    ImGui::DragFloat3("Translation", glm::value_ptr(m_ctx.cameraTransform->translation), 0.01f);
-    ImGui::DragFloat3("Rotation", glm::value_ptr(m_ctx.cameraTransform->rotation), 0.01f);
+    bool camChanged = false;
+    camChanged |= ImGui::DragFloat3("Translation", glm::value_ptr(m_ctx.cameraTransform->translation), 0.01f);
+    camChanged |= ImGui::DragFloat3("Rotation", glm::value_ptr(m_ctx.cameraTransform->rotation), 0.01f);
     float fov = glm::degrees(m_ctx.camera->GetPerspectiveVerticalFOV());
     if (ImGui::DragFloat("FOV", &fov, 0.01f)) {
         m_ctx.camera->SetPerspectiveVerticalFOV(glm::radians(fov));
+        camChanged = true;
     }
+    if (camChanged) m_ctx.setAccumDirty();
 }
 
 void EditorUI::drawModelRefsPanel()

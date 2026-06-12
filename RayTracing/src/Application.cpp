@@ -1399,16 +1399,14 @@ void Application::createRtComputePipeline() {
 // ── Sphere buffer (SSBO) ──────────────────────────────────────────
 
 void Application::createSphereBuffer() {
-    if (m_spheres.empty()) {
-        m_spheres.push_back({});
-    }
     for (size_t i = 0; i < m_framesInFlight; i++) {
         auto sphereBuffer = std::make_unique<Buffer>(
             Buffer::createBuffer(m_vulkanDevice.get(),
                 kMaxSpheres * sizeof(SphereData),
                 vk::BufferUsageFlagBits::eStorageBuffer,
                 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
-        sphereBuffer->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
+        if (!m_spheres.empty())
+            sphereBuffer->copyFrom(m_spheres.data(), m_spheres.size() * sizeof(SphereData));
         m_sphereBuffers.emplace_back(std::move(sphereBuffer));
     }
     m_spheresDirty = 0;
@@ -1418,16 +1416,14 @@ void Application::createSphereBuffer() {
 // ── Material buffer (SSBO) ─────────────────────────────────────────
 
 void Application::createMaterialBuffer() {
-    if (m_materials.empty()) {
-        m_materials.push_back({});
-    }
     for (size_t i = 0; i < m_framesInFlight; i++) {
         auto buf = std::make_unique<Buffer>(
             Buffer::createBuffer(m_vulkanDevice.get(),
                 kMaxMaterials * sizeof(MaterialData),
                 vk::BufferUsageFlagBits::eStorageBuffer,
                 vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
-        buf->copyFrom(m_materials.data(), m_materials.size() * sizeof(MaterialData));
+        if (!m_materials.empty())
+            buf->copyFrom(m_materials.data(), m_materials.size() * sizeof(MaterialData));
         m_materialBuffers.emplace_back(std::move(buf));
     }
     m_materialsDirty = 0;

@@ -4,7 +4,10 @@
       "Bash(cargo run *)",
       "Bash(cargo test *)",
       "Bash(cargo check *)",
-      "Bash(cp *)"
+      "Bash(cp *)",
+      "Bash(where vulkaninfo *)",
+      "Bash(D:/VulkanSDK/1.4.335.0/Bin/slangc.exe *)",
+      "Bash(\"D:/VulkanSDK/1.4.335.0/Bin/glslangValidator.exe\" --version)"
     ]
   }
 }
