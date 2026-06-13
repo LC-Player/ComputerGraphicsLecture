@@ -37,6 +37,9 @@ target_sources(PathTracing PRIVATE
 target_sources(PathTracing PRIVATE
         src/main.cpp
         src/Application.cpp
+        src/SceneManager.cpp
+        src/GeometryManager.cpp
+        src/DescriptorManager.cpp
         src/Camera.cpp
         src/imgui_impl_glfw.cpp
         src/imgui_impl_vulkan.cpp

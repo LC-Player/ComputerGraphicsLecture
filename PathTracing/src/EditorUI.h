@@ -15,8 +15,9 @@ struct Transform;
 
 namespace RYRayTracing {
 
+// All pointer members are non-owning observation pointers into Application-owned data
+// (SceneManager, GeometryManager). Lifetime: EditorUI is destroyed before these owners.
 struct EditorUIContext {
-    // Camera
     Transform* cameraTransform = nullptr;
     SceneCamera* camera = nullptr;
 
