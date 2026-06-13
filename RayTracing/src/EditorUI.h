@@ -15,12 +15,12 @@ struct Transform;
 
 namespace RYRayTracing {
 
+// All pointer members are non-owning observation pointers into Application-owned data
+// (SceneManager, GeometryManager). Lifetime: EditorUI is destroyed before these owners.
 struct EditorUIContext {
-    // Camera
     Transform* cameraTransform = nullptr;
     SceneCamera* camera = nullptr;
 
-    // Model refs
     std::vector<ModelRef>* modelRefs = nullptr;
     std::vector<int>* modelRefSourceIdx = nullptr;
     std::vector<Transform>* modelRefTransforms = nullptr;
@@ -28,23 +28,17 @@ struct EditorUIContext {
     std::vector<MaterialData>* materials = nullptr;
     size_t maxModelRefs = 64;
 
-    // Lights
     std::vector<LightData>* lights = nullptr;
 
-    // Spheres
     std::vector<SphereData>* spheres = nullptr;
     size_t maxSpheres = 32;
 
-    // Materials
     size_t maxMaterials = 32;
 
-    // Global illumination
     float* ambientStrength = nullptr;
 
-    // FPS (read via pointer each frame)
     const float* currentFps = nullptr;
 
-    // Dirty callbacks
     std::function<void()> setLightsDirty;
     std::function<void()> setSpheresDirty;
     std::function<void()> setMaterialsDirty;
