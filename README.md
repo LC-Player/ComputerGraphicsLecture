@@ -1,122 +1,71 @@
-# Vulkan Triangle Rendering Project
+# ComputerGraphicsLecture
 
-This project demonstrates a simple Vulkan application that renders a colored triangle using modern C++ and a modular architecture.
+Computer Graphics lab projects — Vulkan 1.4 + C++20 + Slang Shaders
 
-## Project Structure
-
-```
-src/
-├── core/                    # Core utilities
-│   ├── Exception.hpp/cpp   # Vulkan exception handling
-│   ├── Logger.hpp/cpp      # Logging system
-│   └── VulkanMacros.hpp    # Vulkan helper macros
-├── utils/                  # Utility functions
-│   └── FileUtil.hpp/cpp    # File I/O utilities
-├── window/                 # Window management
-│   └── WindowManager.hpp/cpp # GLFW window wrapper
-├── vulkan/                 # Vulkan core components
-│   ├── Validation.hpp/cpp  # Validation layer management
-│   ├── VulkanInstance.hpp/cpp # Vulkan instance
-│   ├── VulkanDevice.hpp/cpp   # Logical device
-│   ├── Buffer.hpp/cpp      # Buffer management
-│   ├── ShaderModule.hpp/cpp # Shader loading
-│   └── SwapChainManager.hpp/cpp # Swap chain (partial)
-├── Application.hpp/cpp     # Main application class
-└── main.cpp               # Application entry point
-
-assets/shaders/            # Shader files
-├── triangle.vert         # Vertex shader source
-├── triangle.frag         # Fragment shader source
-├── triangle.vert.spv     # Compiled vertex shader
-└── triangle.frag.spv     # Compiled fragment shader
-```
-
-## Building the Project
+## Build
 
 ### Prerequisites
-- CMake 3.20 or higher
-- C++20 compatible compiler
-- Vulkan SDK
-- GLFW3
+
+- Visual Studio with MSVC C++ toolchain
+- [Vulkan SDK](https://vulkan.lunarg.com/) (developed on 1.4.335.0)
+  - `Bin` directory in PATH
+  - `VULKAN_SDK` environment variable set
+- [vcpkg](https://github.com/microsoft/vcpkg)
+- CMake ≥ 3.20
 
 ### Build Steps
 
-1. **Configure with CMake:**
-   ```bash
-   mkdir build
-   cd build
-   cmake ..
+1. Copy `CMakePresets.json.example` to `CMakePresets.json`
+2. Replace the vcpkg path in `CMakePresets.json`:
+
+   ```json
+   "CMAKE_TOOLCHAIN_FILE": "[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake"
    ```
 
-2. **Build the project:**
-   ```bash
-   cmake --build .
-   ```
+3. Open the repository root in Visual Studio — CMakePresets will be picked up automatically
+4. Select a target in Solution Explorer and build
 
-3. **Run the application:**
-   ```bash
-   ./RayTracing
-   ```
+Shaders are authored in Slang and compiled to SPIR-V automatically by the CMake build scripts via `slangc`.
 
-### Windows-specific Notes
-- Ensure Vulkan SDK is installed and `VULKAN_SDK` environment variable is set
-- GLFW3 is managed via vcpkg (already configured in CMakeLists.txt)
+## Subprojects
 
-## Features Implemented
+| Project | Lab | Description |
+|---------|-----|-------------|
+| **VkFromScratch** | Lab 1, 2 | Vulkan scaffold: triangle/quad rendering, instanced draw, ImGui debug panel |
+| **BlinnPhong** | Lab 3 | Rasterization-based Blinn-Phong multi-light (point, spot, directional) + ambient |
+| **RayTracing** | Final PJ (core) | Software ray tracing on Compute Shader: SAH BVH, PBR-inspired shading, recursive reflection/refraction |
+| **PathTracing** | Final PJ (exploration) | Hardware path tracing via `VK_KHR_ray_tracing_pipeline`: Monte Carlo sampling, progressive accumulation |
 
-### Core Infrastructure
-- **Logging System**: Multi-level logging with file and console output
-- **Exception Handling**: Custom Vulkan exception class with detailed error information
-- **Vulkan Macros**: Helper macros for Vulkan error checking
+## Directory Layout
 
-### Window Management
-- GLFW-based window creation
-- Event handling (resize, key, mouse)
-- Vulkan surface creation
+```
+.
+├── CMakeLists.txt
+├── CMakePresets.json.example
+├── vcpkg.json
+├── imgui/                         # Dear ImGui library source
+├── docs/images/                   # Report screenshots
+├── RayTracing/src/
+│   ├── core/                      # Logger, exception, Vulkan macros
+│   ├── utils/                     # File I/O
+│   ├── window/                    # GLFW window management
+│   └── vulkan/                    # Vulkan abstractions (instance, device, buffer, texture, pipeline, etc.)
+├── PathTracing/src/               # Shares core/utils/window/vulkan modules with RayTracing
+│   └── vulkan/                    # Also includes AccelerationStructure (TLAS/BLAS)
+├── BlinnPhong/src/                # Shares core/utils/window/vulkan modules
+│   ├── Model.*, Instance.*        # Model loading & instanced rendering
+│   └── Application.*              # Rasterization pipeline
+└── VkFromScratch/                 # Standalone scaffold
+    ├── main.cpp, Application.*    # App init & main loop
+    ├── Pipeline.*, Resources.*    # Pipeline creation, buffers & descriptors
+    ├── Rendering.*                # Command recording & frame loop
+    └── Camera.*
+```
 
-### Vulkan Core
-- Instance creation with validation layers
-- Physical device selection
-- Logical device creation
-- Buffer management (vertex buffers)
-- Shader module loading from SPIR-V
+The `core/`, `utils/`, `window/`, `vulkan/` modules are shared across RayTracing, PathTracing, and BlinnPhong via per-project `target_sources` in CMake (not extracted as a library), so each project can add or remove sources freely.
 
-### Application Logic
-- Modular application architecture
-- Vertex buffer with colored triangle data
-- Shader loading and pipeline setup (simplified)
-- Main event loop
+## Development Notes
 
-## Current Status
-
-The project successfully:
-- Creates a window using GLFW
-- Initializes Vulkan with validation layers
-- Creates a logical device
-- Loads shaders from SPIR-V files
-- Creates a vertex buffer with triangle data
-- Runs a main event loop
-
-**Note**: The graphics pipeline creation is simplified in the current implementation. A full pipeline setup with render passes, framebuffers, and command buffers would be needed for actual rendering.
-
-## Architecture Design
-
-The project follows a modular design:
-1. **Core Module**: Logging, exceptions, and utilities
-2. **Window Module**: Platform-agnostic window management
-3. **Vulkan Module**: Vulkan object wrappers with RAII semantics
-4. **Application Layer**: High-level application logic
-
-This separation allows for easy testing, maintenance, and future extensions.
-
-## Future Enhancements
-
-1. Complete graphics pipeline setup
-2. Swap chain management
-3. Command buffer recording and submission
-4. Synchronization objects (semaphores, fences)
-5. Full triangle rendering
-6. Texture support
-7. 3D model loading
-8. Camera system
-9. Lighting and materials
+- C++20 standard enforced across all targets
+- Code should leverage `vk::raii` — RAII wrappers for Vulkan handles that manage lifetime automatically. Avoid manual `vkDestroy*` / `vkFree*` calls.
+- Dependencies managed by vcpkg (see `vcpkg.json`)

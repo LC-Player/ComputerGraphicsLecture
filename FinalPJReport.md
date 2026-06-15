@@ -1,5 +1,8 @@
 # Final-miniRTRender 实验报告
 
+王秭研 24302010023
+2026年6月15日
+
 ## 时间记录
 
 | 阶段 | 内容 | 耗时（小时） |
@@ -409,14 +412,8 @@ PathTracing 子项目使用 Vulkan 硬件光线追踪管线（`VK_KHR_ray_tracin
 
 - 操作系统：Windows 11 Pro
 - GPU：Intel Arc Graphics (Ultra 9 185H 核显)
-- API：Vulkan 1.3, Slang (SPIR-V)
+- API：Vulkan 1.4, Slang
 - 分辨率：1920 x 1080
-
-### 运行方式
-
-```
-miniRTRender-v2.exe SceneConfig.xml
-```
 
 ### 画面效果
 
@@ -442,4 +439,4 @@ PathTracing效果，真实的漫反射，但存在一些噪点
 
 ## Part 4：Path Tracing 技术工业应用报告
 
-见PathTracingReport.pdf。
+见另附pdf文件。
