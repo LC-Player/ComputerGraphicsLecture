@@ -136,8 +136,8 @@ private:
 
     // Command buffers + sync
     std::vector<vk::raii::CommandBuffer> m_commandBuffers;
-    std::vector<vk::raii::Semaphore> m_imageAvailableSemaphores;
-    std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;
+    std::vector<vk::raii::Semaphore> m_imageAvailableSemaphores;   // per frame-in-flight
+    std::vector<vk::raii::Semaphore> m_renderFinishedSemaphores;   // per swapchain image
     std::vector<vk::raii::Fence> m_inFlightFences;
     std::vector<vk::Fence> m_imagesInFlight;
 

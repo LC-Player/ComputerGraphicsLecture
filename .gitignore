@@ -2,6 +2,7 @@
 .vs/
 .vscode/
 .idea/
+.codely-cli/
 Build/
 MakefilesBuild/
 build/
@@ -30,7 +31,6 @@ cmake-build-relwithdebinfo-visual-studio/
 *.ilk
 *.log
 *.tlog/
-*.obj
 *.exp
 *.lib
 *.dll

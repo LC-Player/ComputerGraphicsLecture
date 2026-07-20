@@ -503,8 +503,10 @@ void Application::createRTPipeline() {
 
     auto& rtProps = m_vulkanDevice->getRTPipelineProps();
     uint32_t handleSize = rtProps.shaderGroupHandleSize;
-    uint32_t handleAlign = rtProps.shaderGroupHandleAlignment;
-    m_sbtStride = (handleSize + handleAlign - 1) & ~(handleAlign - 1);
+    // Stride must be aligned to shaderGroupBaseAlignment so that each SBT
+    // region's deviceAddress is a multiple of shaderGroupBaseAlignment.
+    uint32_t baseAlign = rtProps.shaderGroupBaseAlignment;
+    m_sbtStride = (handleSize + baseAlign - 1) & ~(baseAlign - 1);
     m_sbtHitGroupOffset = 3 * m_sbtStride;
     m_sbtMissOffset = 1 * m_sbtStride;
     m_sbtShadowMissOffset = 2 * m_sbtStride;
@@ -559,7 +561,8 @@ void Application::createRtStorageImage() {
     imageInfo.setFormat(vk::Format::eR8G8B8A8Unorm);
     imageInfo.setTiling(vk::ImageTiling::eOptimal);
     imageInfo.setInitialLayout(vk::ImageLayout::eUndefined);
-    imageInfo.setUsage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled);
+    imageInfo.setUsage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled
+                       | vk::ImageUsageFlagBits::eTransferDst);
     imageInfo.setSharingMode(vk::SharingMode::eExclusive);
     imageInfo.setSamples(vk::SampleCountFlagBits::e1);
 
@@ -791,9 +794,13 @@ void Application::createSyncObjects() {
     m_imagesInFlight.resize(m_framesInFlight, nullptr);
     for (size_t i = 0; i < m_framesInFlight; i++) {
         m_imageAvailableSemaphores.emplace_back(m_vulkanDevice->get().createSemaphore({}));
-        m_renderFinishedSemaphores.emplace_back(m_vulkanDevice->get().createSemaphore({}));
         m_inFlightFences.emplace_back(m_vulkanDevice->get().createFence(
             {vk::FenceCreateFlagBits::eSignaled}));
+    }
+    // renderFinishedSemaphores are indexed by swapchain image index (one per image)
+    uint32_t imageCount = m_swapChainManager->getImageCount();
+    for (size_t i = 0; i < imageCount; i++) {
+        m_renderFinishedSemaphores.emplace_back(m_vulkanDevice->get().createSemaphore({}));
     }
 }
 
@@ -885,6 +892,16 @@ void Application::rebuildTLASIfNeeded() {
         instances.push_back(makeInstance(m_sphereUnitBLAS, xform, sphereBase + static_cast<uint32_t>(s)));
     }
 
+    if (instances.empty()) {
+        LOG_WARNING("No instances for TLAS — no models or spheres loaded. "
+                    "Place model files in assets/models/ as referenced by SceneConfig.xml.");
+        if (m_tlas.handle) {
+            m_retiredTLAS.push_back(std::move(m_tlas));
+            m_tlas = TLAS{};
+        }
+        return;
+    }
+
     TLAS newTLAS = buildTLAS(m_vulkanDevice.get(), instances);
     if (m_tlas.handle) m_retiredTLAS.push_back(std::move(m_tlas));
     m_tlas = std::move(newTLAS);
@@ -892,6 +909,15 @@ void Application::rebuildTLASIfNeeded() {
 
 void Application::recordRTPass() {
     auto& cmd = m_commandBuffers[m_currentFrame];
+
+    // If TLAS is null (no geometry loaded), skip ray tracing and clear output to black
+    if (!m_tlas.handle) {
+        vk::ClearColorValue black{0.0f, 0.0f, 0.0f, 1.0f};
+        vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+        cmd.clearColorImage(*m_rtOutputImages[m_currentFrame],
+            vk::ImageLayout::eGeneral, black, range);
+        return;
+    }
 
     // Write TLAS descriptor
     m_descriptorManager.writeTLASBinding(m_currentFrame, m_tlas.handle);
@@ -994,10 +1020,10 @@ void Application::submitFrame(uint32_t imageIndex) {
     submitInfo.setWaitSemaphores(*m_imageAvailableSemaphores[m_currentFrame]);
     submitInfo.setWaitDstStageMask(waitStages);
     submitInfo.setCommandBuffers(*m_commandBuffers[m_currentFrame]);
-    submitInfo.setSignalSemaphores(*m_renderFinishedSemaphores[m_currentFrame]);
+    submitInfo.setSignalSemaphores(*m_renderFinishedSemaphores[imageIndex]);
     m_vulkanDevice->get().resetFences(*m_inFlightFences[m_currentFrame]);
     m_vulkanDevice->getGraphicsQueue().submit(submitInfo, *m_inFlightFences[m_currentFrame]);
-    m_swapChainManager->presentImage(imageIndex, *m_renderFinishedSemaphores[m_currentFrame]);
+    m_swapChainManager->presentImage(imageIndex, *m_renderFinishedSemaphores[imageIndex]);
 }
 
 void Application::updateFPS() {
@@ -1029,6 +1055,10 @@ void Application::recreateSwapChain() {
     cleanupRtSwapChainResources();
     m_swapChainManager->recreate(m_windowWidth, m_windowHeight);
     m_framesInFlight = m_swapChainManager->getImageCount();
+    // Recreate sync objects: renderFinishedSemaphores are per swapchain image,
+    // so they must be rebuilt when image count changes.
+    cleanupSyncObjects();
+    createSyncObjects();
     createRenderPass();
     createDepthResources();
     createFramebuffers();
