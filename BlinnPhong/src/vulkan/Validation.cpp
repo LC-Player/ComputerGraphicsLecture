@@ -66,7 +66,7 @@ vk::DebugUtilsMessengerCreateInfoEXT Validation::getDebugMessengerCreateInfo() {
 }
 
 bool Validation::shouldEnableValidation() {
-#ifdef ENABLE_VALIDATION_LAYERS
+#if ENABLE_VALIDATION_LAYERS
     return true;
 #else
     return false;

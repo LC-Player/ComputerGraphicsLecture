@@ -20,24 +20,16 @@
 
 ### 环境要求
 
-- Visual Studio（含 MSVC C++ 工具链）
+- Visual Studio 26（含 MSVC C++ 工具链）
 - [Vulkan SDK](https://vulkan.lunarg.com/)（开发使用 1.4.335.0）
   - `Bin` 目录需加入 PATH
   - 需设置 `VULKAN_SDK` 环境变量
-- [vcpkg](https://github.com/microsoft/vcpkg)（依赖管理）
-- CMake ≥ 3.20
+- CMake ≥ 3.25，Ninja，VCpkg（均已集成于VS26)
 
 ### 编译步骤
 
-1. 将仓库根目录下的 `CMakePresets.json.example` 复制为 `CMakePresets.json`
-2. 修改 `CMakePresets.json` 中的 vcpkg 路径：
-
-   ```json
-   "CMAKE_TOOLCHAIN_FILE": "[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake"
-   ```
-
-3. 在 Visual Studio 中打开仓库根目录，IDE 将自动识别 CMakePresets 并完成依赖配置
-4. 在 Visual Studio 的解决方案资源管理器中选择目标项目，编译即可
+1. 在 Visual Studio 中打开仓库根目录，IDE 将自动识别 CMakePresets 并完成依赖配置
+2. 在 Visual Studio 的解决方案资源管理器中选择目标项目，编译即可
 
 仓库包含四个可编译子项目，本次 PJ 对应其中两个：
 

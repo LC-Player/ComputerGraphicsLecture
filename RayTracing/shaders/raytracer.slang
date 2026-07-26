@@ -482,7 +482,7 @@ float3 castRay(Ray rayInitial) {
             bool isInside = dot(ray.direction, hit.normal) > 0.0; // 在球内时，光线和法线方向相同，所以大于0
             float3 faceNormal = isInside ? -hit.normal : hit.normal; // 以“击点”为视角，如果从内射击，则faceNormal=反一下的法线（法线朝内）
             
-            float cosThetaI = dot(V, faceNormal); // note: max 是否可以删除？从外部击中，V朝外，faceNormal朝外，方向一致，从内部击中，V朝内，faceNormal朝内，方向也一致
+            float cosThetaI = dot(V, faceNormal);
 
             float eta_i = isInside ? mat.ior : 1.0; // 入射介质折射率
             float eta_t = isInside ? 1.0 : mat.ior; // 出射介质折射率

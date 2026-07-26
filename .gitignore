@@ -30,7 +30,6 @@ cmake-build-relwithdebinfo-visual-studio/
 *.ilk
 *.log
 *.tlog/
-*.obj
 *.exp
 *.lib
 *.dll
@@ -39,7 +38,6 @@ cmake-build-relwithdebinfo-visual-studio/
 .DS_STORE
 CMakeUserPresets.json
 CMakeSettings.json
-CMakePresets.json
 
 #custom
 Lab1Triangle/Lab1-Vulkan中三角形绘制-2026.pdf

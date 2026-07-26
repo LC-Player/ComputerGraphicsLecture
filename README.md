@@ -6,24 +6,16 @@ Computer Graphics lab projects — Vulkan 1.4 + C++20 + Slang Shaders
 
 ### Prerequisites
 
-- Visual Studio with MSVC C++ toolchain
-- [Vulkan SDK](https://vulkan.lunarg.com/) (developed on 1.4.335.0)
+- Visual Studio 26 with MSVC C++ toolchain
+- [Vulkan SDK](https://vulkan.lunarg.com/) (developed on 1.4.350.0)
   - `Bin` directory in PATH
   - `VULKAN_SDK` environment variable set
-- [vcpkg](https://github.com/microsoft/vcpkg)
-- CMake ≥ 3.20
+- CMake ≥ 3.25, Ninja, vcpkg (all integrated in VS26)
 
 ### Build Steps
 
-1. Copy `CMakePresets.json.example` to `CMakePresets.json`
-2. Replace the vcpkg path in `CMakePresets.json`:
-
-   ```json
-   "CMAKE_TOOLCHAIN_FILE": "[path-to-vcpkg]/scripts/buildsystems/vcpkg.cmake"
-   ```
-
-3. Open the repository root in Visual Studio — CMakePresets will be picked up automatically
-4. Select a target in Solution Explorer and build
+1. Open the repository root in Visual Studio — CMakePresets will be picked up automatically
+2. Select a target in Solution Explorer and build
 
 Shaders are authored in Slang and compiled to SPIR-V automatically by the CMake build scripts via `slangc`.
 

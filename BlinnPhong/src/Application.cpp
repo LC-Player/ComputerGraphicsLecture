@@ -267,9 +267,11 @@ void Application::cleanup() {
         m_vulkanDevice->waitIdle();
     }
 
-    ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    if (ImGui::GetCurrentContext() != nullptr) {
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+    }
 
     cleanupSwapChain();
     cleanupSyncObjects();
